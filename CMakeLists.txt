@@ -27,6 +27,7 @@ target_include_directories(${PROJECT_NAME}
         PUBLIC include
         PUBLIC ext/glfw/include
         PUBLIC ext/volk
+        PUBLIC ext/spirv_reflect
 )
 
 target_link_directories(${PROJECT_NAME}

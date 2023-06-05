@@ -4,9 +4,6 @@
 [submodule "ext/volk"]
 	path = ext/volk
 	url = https://github.com/zeux/volk
-[submodule "SPIRV-Reflect"]
-	path = SPIRV-Reflect
-	url = https://github.com/KhronosGroup/SPIRV-Reflect
 [submodule "ext/spirv_reflect"]
 	path = ext/spirv_reflect
 	url = https://github.com/KhronosGroup/SPIRV-Reflect

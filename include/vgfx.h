@@ -5,4 +5,8 @@
 
 
 
+#if defined(VGFX_IMPLEMENATION)
+
+#endif
+
 #endif
