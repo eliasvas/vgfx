@@ -7,3 +7,6 @@
 [submodule "ext/spirv_reflect"]
 	path = ext/spirv_reflect
 	url = https://github.com/KhronosGroup/SPIRV-Reflect
+[submodule "ext/vma"]
+	path = ext/vma
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
