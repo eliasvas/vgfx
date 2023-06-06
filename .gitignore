@@ -2,4 +2,6 @@ build/
 assets/
 ext/glfw/
 ext/volk/
+ext/spirv_reflect/
+ext/vma
 .vscode/
