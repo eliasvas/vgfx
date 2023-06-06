@@ -5,18 +5,19 @@
 #include <volk/volk.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include "vgfx.h"
+vgContext c;
 
 int main(){
+    printf("Game started!\n");
     volkInitialize();
     glfwInit();
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     GLFWwindow* window = glfwCreateWindow(800, 600, "Vulkan Window", NULL, NULL);
 
-    uint32_t extension_count = 0;
-    vkEnumerateInstanceExtensionProperties(NULL, &extension_count, NULL);
+    vg_init(&c);
 
-    printf("extension count: [%i]\n", extension_count);
     while(!glfwWindowShouldClose(window)) {
         glfwPollEvents();
     }
@@ -24,6 +25,8 @@ int main(){
     glfwDestroyWindow(window);
 
     glfwTerminate();
+
+    vg_cleanup(&c);
 
     return 0;
 }
