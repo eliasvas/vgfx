@@ -181,8 +181,6 @@ typedef enum {
     M_OK,
 }M_RESULT;
 
-#define LOG_ERR printf
-#define LOG_WARN printf
-#define LOG_DBG printf
+
 
 #endif

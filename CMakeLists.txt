@@ -21,6 +21,8 @@ if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
 endif()
 
 
+find_package(Vulkan REQUIRED)
+include_directories(${Vulkan_INCLUDE_DIR})
 
 
 target_include_directories(${PROJECT_NAME} 
@@ -28,6 +30,7 @@ target_include_directories(${PROJECT_NAME}
         PUBLIC ext/glfw/include
         PUBLIC ext/volk
         PUBLIC ext/spirv_reflect
+        PUBLIC ext/vma
 )
 
 target_link_directories(${PROJECT_NAME}
@@ -38,7 +41,7 @@ target_link_libraries(${PROJECT_NAME} glfw volk_headers)
 
 add_subdirectory(ext/glfw)
 add_subdirectory(ext/volk)
-
+add_subdirectory(ext/vma)
 add_custom_command(
         TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
