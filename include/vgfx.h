@@ -3,8 +3,11 @@
 #include "base.h"
 #include <volk/volk.h>
 #include <vma/vk_mem_alloc.h>
-#include <glfw/glfw3.h>
-
+#define VK_USE_PLATFORM_WIN32_KHR
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 
 #define VK_CHECK(x)                                                 \
 	do                                                              \
@@ -17,15 +20,18 @@
 		}                                                           \
 	} while (0)
 
+extern GLFWwindow *window;
+
 typedef struct vgContext {
-
-
     //Implementation (vulkan) specific fields, we should abstract them somehow!!
     VkInstance instance;
     VkPhysicalDevice pd;
     VkDevice device;
+    VkQueue graphics_queue;
+    VkQueue present_queue;
     u32 qgraphics_family_index;
     u32 qpresent_family_index;
+    VkSurfaceKHR surface;
 }vgContext;
 
 M_RESULT vg_init(vgContext *ctx);
@@ -92,6 +98,12 @@ b32 vk_check_vl_support(void){
     return TRUE;
 }
 
+static inline VkSurfaceKHR vk_surface_create(VkInstance instance, GLFWwindow *win){
+    VkSurfaceKHR surface = {0};
+    VK_CHECK(glfwCreateWindowSurface(instance, win, NULL, &surface));
+    return surface;
+}
+
 static inline b32 vk_find_queue_family(VkPhysicalDevice pd, VkQueueFlagBits queue_family, u32 *family_index){
     VkQueueFamilyProperties queue_families[VK_MAX_OBJECTS];
     u32 queue_family_count = 0;
@@ -106,17 +118,36 @@ static inline b32 vk_find_queue_family(VkPhysicalDevice pd, VkQueueFlagBits queu
     }
     return FALSE;
 }
-static inline b32 vk_physical_device_gud(VkPhysicalDevice pd){
+
+static inline b32 vk_find_present_queue_family(VkPhysicalDevice pd,VkSurfaceKHR surface, u32 *family_index){
+    VkQueueFamilyProperties queue_families[VK_MAX_OBJECTS];
+    u32 queue_family_count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(pd, &queue_family_count, NULL);
+    queue_family_count = MIN(VK_MAX_OBJECTS, queue_family_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(pd, &queue_family_count, queue_families);
+    for (u32 i = 0; i < queue_family_count; ++i){
+        VkBool32 present_support = FALSE;
+        vkGetPhysicalDeviceSurfaceSupportKHR(pd, i, surface, &present_support);
+        if (present_support){
+            *(family_index) = i;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+static inline b32 vk_physical_device_gud(VkPhysicalDevice pd, VkSurfaceKHR surface){
     VkPhysicalDeviceProperties dp;
     VkPhysicalDeviceFeatures df;
     vkGetPhysicalDeviceProperties(pd, &dp);
     vkGetPhysicalDeviceFeatures(pd, &df);
     u32 graphics_family_index=0;
     b32 pd_supports_graphics = vk_find_queue_family(pd, VK_QUEUE_GRAPHICS_BIT,&graphics_family_index);
-    return (pd_supports_graphics && VK_API_VERSION_MAJOR(dp.apiVersion) >= 1 && VK_API_VERSION_MINOR(dp.apiVersion) >= 3);
+    u32 present_family_index=0;
+    b32 pd_supports_present = vk_find_present_queue_family(pd, surface,&present_family_index);
+    return (pd_supports_present && pd_supports_graphics && VK_API_VERSION_MAJOR(dp.apiVersion) >= 1 && VK_API_VERSION_MINOR(dp.apiVersion) >= 3);
 }
 
-static inline VkPhysicalDevice vk_physical_device_pick(VkInstance instance){
+static inline VkPhysicalDevice vk_physical_device_pick(VkInstance instance, VkSurfaceKHR surface){
     VkPhysicalDevice pd = VK_NULL_HANDLE;
     u32 device_count;
     vkEnumeratePhysicalDevices(instance, &device_count, NULL);
@@ -128,7 +159,7 @@ static inline VkPhysicalDevice vk_physical_device_pick(VkInstance instance){
     VkPhysicalDevice devices[VK_MAX_OBJECTS];
     vkEnumeratePhysicalDevices(instance, &device_count, devices);
     for (u32 i = 0; i < device_count; ++i){
-        if (vk_physical_device_gud(devices[i])){
+        if (vk_physical_device_gud(devices[i], surface)){
             pd = devices[i];
             break;
         }
@@ -139,46 +170,68 @@ static inline VkPhysicalDevice vk_physical_device_pick(VkInstance instance){
     return pd;
 }
 
-static inline VkDevice vk_device_create(VkPhysicalDevice pd){
+static inline VkDevice vk_device_create(VkPhysicalDevice pd, u32 graphics_family_index, VkQueue *graphics_queue, u32 present_family_index, VkQueue *present_queue){
     VkDevice device;
-    u32 graphics_family_index=0;
-    vk_find_queue_family(pd, VK_QUEUE_GRAPHICS_BIT,&graphics_family_index);
-    VkDeviceQueueCreateInfo queue_create_info = {0};
-    queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queue_create_info.queueFamilyIndex = graphics_family_index;
-    queue_create_info.queueCount = 1;
-    f32 queue_priority = 1.0f;
-    queue_create_info.pQueuePriorities = &queue_priority;
-    VkPhysicalDeviceFeatures device_features = {0};
+    VkDeviceQueueCreateInfo queue_cis[2] = {0};
+    if (graphics_family_index == present_family_index){
+        float queue_priority = 1.0f;
+        VkDeviceQueueCreateInfo queue_ci = {0};
+        queue_ci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queue_ci.queueFamilyIndex = graphics_family_index;
+        queue_ci.queueCount = 1;
+        queue_ci.pQueuePriorities = &queue_priority;
+        queue_cis[0] = queue_ci;
+    }else {
+        float queue_priority = 1.0f;
+        VkDeviceQueueCreateInfo queue_ci = {0};
+        queue_ci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queue_ci.queueFamilyIndex = graphics_family_index;
+        queue_ci.queueCount = 1;
+        queue_ci.pQueuePriorities = &queue_priority;
+        queue_cis[0] = queue_ci;
+        queue_ci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queue_ci.queueFamilyIndex = present_family_index;
+        queue_ci.queueCount = 1;
+        queue_ci.pQueuePriorities = &queue_priority;
+        queue_cis[1] = queue_ci;   
+    }
 
+    VkPhysicalDeviceFeatures device_features = {0};
     VkDeviceCreateInfo ci = {0};
     ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    ci.pQueueCreateInfos = &queue_create_info;
-    ci.queueCreateInfoCount = 1;
     ci.pEnabledFeatures = &device_features;
+    ci.queueCreateInfoCount = (graphics_family_index == present_family_index) ? 1 : 2;
+    ci.pQueueCreateInfos = queue_cis;
     VK_CHECK(vkCreateDevice(pd, &ci, NULL,&device));
     
+
+    
+    vkGetDeviceQueue(device, graphics_family_index, 0, graphics_queue);
+    vkGetDeviceQueue(device, present_family_index, 0, present_queue);
     return device;
 }
 
 M_RESULT vg_init(vgContext *ctx){
     ctx->instance = vk_instance_create();
     ASSERT(ctx->instance);
+    ctx->surface = vk_surface_create(ctx->instance, window);
     volkLoadInstance(ctx->instance);
-    ctx->pd = vk_physical_device_pick(ctx->instance);
+    ctx->pd = vk_physical_device_pick(ctx->instance, ctx->surface);
     ASSERT(ctx->pd);
     ASSERT(vk_check_vl_support());
-    ASSERT(vk_find_queue_family(ctx->pd, VK_QUEUE_GRAPHICS_BIT,&ctx->qgraphics_family_index));
-    ctx->device = vk_device_create(ctx->pd);
+    vk_find_queue_family(ctx->pd, VK_QUEUE_GRAPHICS_BIT,&ctx->qgraphics_family_index);
+    vk_find_present_queue_family(ctx->pd, ctx->surface,&ctx->qpresent_family_index);
+    ctx->device = vk_device_create(ctx->pd, ctx->qgraphics_family_index, &ctx->graphics_queue, ctx->qpresent_family_index, &ctx->present_queue);
     printf("vg_init success!\n");
     return M_OK;
 }
 M_RESULT vg_cleanup(vgContext *ctx){
-    vkDestroyDevice(device, NULL);
+    vkDestroyDevice(ctx->device, NULL);
+    vkDestroySurfaceKHR(ctx->instance, ctx->surface, NULL);
     vkDestroyInstance(ctx->instance, NULL);
     ctx->instance = vk_instance_create();
     return M_OK;
 }
-#endif
 
+#endif
 #endif
