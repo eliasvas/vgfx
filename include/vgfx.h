@@ -9,6 +9,9 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 
+#define VK_MAX_OBJECTS 256
+#define VK_SWAP_IMAGE_COUNT 2
+
 #define VK_CHECK(x)                                                 \
 	do                                                              \
 	{                                                               \
@@ -22,6 +25,13 @@
 
 extern GLFWwindow *window;
 
+typedef struct {
+    VkSurfaceCapabilitiesKHR cap;
+    VkSurfaceFormatKHR formats[VK_MAX_OBJECTS];
+    u32 format_count;
+    VkPresentModeKHR present_modes[VK_MAX_OBJECTS];
+    u32 present_mode_count;
+}vk_SwapSupportDetails;
 typedef struct vgContext {
     //Implementation (vulkan) specific fields, we should abstract them somehow!!
     VkInstance instance;
@@ -32,6 +42,12 @@ typedef struct vgContext {
     u32 qgraphics_family_index;
     u32 qpresent_family_index;
     VkSurfaceKHR surface;
+
+
+	VkSwapchainKHR swap;
+	VkFormat swap_image_format;
+	VkImage swap_images[VK_SWAP_IMAGE_COUNT];
+	VkImageView swap_image_views[VK_SWAP_IMAGE_COUNT];
 }vgContext;
 
 M_RESULT vg_init(vgContext *ctx);
@@ -41,10 +57,16 @@ M_RESULT vg_init(vgContext *ctx);
 static const char *validation_layers[] = {
     "VK_LAYER_KHRONOS_validation"
 };
+static const char *needed_device_extensions[] = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    //VK_KHR_SURFACE_EXTENSION_NAME,
+    //VK_KHR_WIN32_SURFACE_EXTENSION_NAME
+};
+
 #ifdef NDEBUG
     const b32 enable_vl = FALSE;
 #else
-    const b32 enable_vl = TRUE;
+    const b32 enable_vl = FALSE;
 #endif
 //static char vk_error_log[256];
 
@@ -61,7 +83,7 @@ static inline VkInstance vk_instance_create(void){
 
 
     u32 glfw_ext_count = 0;
-    const char** glfw_ext;
+    const char** glfw_ext = NULL;
     glfw_ext = glfwGetRequiredInstanceExtensions(&glfw_ext_count); //TODO should this be freed somehow??
 
     VkInstanceCreateInfo ci = {0};
@@ -75,7 +97,6 @@ static inline VkInstance vk_instance_create(void){
     return instance;
 }
 
-#define VK_MAX_OBJECTS 64
 b32 vk_check_vl_support(void){
     u32 layer_count;
     vkEnumerateInstanceLayerProperties(&layer_count, NULL);
@@ -96,6 +117,26 @@ b32 vk_check_vl_support(void){
         }
     }
     return TRUE;
+}
+
+b32 vk_check_device_extension_support(VkPhysicalDevice pd){
+    b32 res = TRUE;
+    u32 extension_count = 0;
+    vkEnumerateDeviceExtensionProperties(pd, NULL, &extension_count, NULL);
+    extension_count = MIN(VK_MAX_OBJECTS, extension_count);
+    VkExtensionProperties available_extensions[VK_MAX_OBJECTS];
+    vkEnumerateDeviceExtensionProperties(pd, NULL, &extension_count, available_extensions);
+    for (u32 i = 0; i < ARRAY_COUNT(needed_device_extensions) && res; ++i){
+        res = FALSE;
+        for (u32 j = 0; j < extension_count; ++j){
+            if (strcmp(needed_device_extensions[i], available_extensions[j].extensionName)==0){
+                res = TRUE;
+                break;
+            }
+        } 
+    }
+
+    return res;
 }
 
 static inline VkSurfaceKHR vk_surface_create(VkInstance instance, GLFWwindow *win){
@@ -135,16 +176,43 @@ static inline b32 vk_find_present_queue_family(VkPhysicalDevice pd,VkSurfaceKHR 
     }
     return FALSE;
 }
+
+
+vk_SwapSupportDetails vk_query_swap_support(VkPhysicalDevice pd, VkSurfaceKHR surface){
+    vk_SwapSupportDetails details = {0};
+    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(pd, surface, &details.cap));
+
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(pd, surface, &details.format_count, NULL));
+    details.format_count = MIN(details.format_count, VK_MAX_OBJECTS);
+    if (details.format_count != 0) {
+        VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(pd, surface, &details.format_count, details.formats));
+    }
+
+
+    VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(pd, surface, &details.present_mode_count, NULL));
+    details.present_mode_count = MIN(details.present_mode_count, VK_MAX_OBJECTS);
+    if (details.present_mode_count != 0) {
+        VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(pd, surface, &details.present_mode_count, details.present_modes));
+    }
+    return details;
+}
+
 static inline b32 vk_physical_device_gud(VkPhysicalDevice pd, VkSurfaceKHR surface){
     VkPhysicalDeviceProperties dp;
     VkPhysicalDeviceFeatures df;
     vkGetPhysicalDeviceProperties(pd, &dp);
     vkGetPhysicalDeviceFeatures(pd, &df);
+    printf("Checking Physical Device: %s\n", dp.deviceName);
     u32 graphics_family_index=0;
     b32 pd_supports_graphics = vk_find_queue_family(pd, VK_QUEUE_GRAPHICS_BIT,&graphics_family_index);
     u32 present_family_index=0;
     b32 pd_supports_present = vk_find_present_queue_family(pd, surface,&present_family_index);
-    return (pd_supports_present && pd_supports_graphics && VK_API_VERSION_MAJOR(dp.apiVersion) >= 1 && VK_API_VERSION_MINOR(dp.apiVersion) >= 3);
+    b32 extensions_supported = vk_check_device_extension_support(pd);
+
+    
+    vk_SwapSupportDetails swap_details = vk_query_swap_support(pd,surface);
+    b32 swapchain_gud = (swap_details.format_count > 0) && (swap_details.present_mode_count > 0);
+    return (swapchain_gud && extensions_supported && pd_supports_present && pd_supports_graphics && VK_API_VERSION_MAJOR(dp.apiVersion) >= 1 && VK_API_VERSION_MINOR(dp.apiVersion) >= 3);
 }
 
 static inline VkPhysicalDevice vk_physical_device_pick(VkInstance instance, VkSurfaceKHR surface){
@@ -170,6 +238,40 @@ static inline VkPhysicalDevice vk_physical_device_pick(VkInstance instance, VkSu
     return pd;
 }
 
+VkSurfaceFormatKHR vk_pick_swap_format(VkSurfaceFormatKHR *available_formats, u32 format_count) {
+    for (u32 i = 0; i < format_count; ++i){
+        if (available_formats[i].format == VK_FORMAT_B8G8R8A8_SRGB && available_formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            return available_formats[i];
+        }
+    }
+    LOG_DBG("Didn't find a good swap chain format, returning the first one!\n");
+    return available_formats[0];
+}
+
+VkPresentModeKHR vk_pick_swap_present_mode(VkPresentModeKHR* available_present_modes, u32 present_mode_count) {
+    return VK_PRESENT_MODE_FIFO_KHR; //TODO: Fix???? we want a lot of FPS!
+}
+
+VkExtent2D vk_pick_swap_extent(GLFWwindow *win, VkSurfaceCapabilitiesKHR cap) {
+    if (cap.currentExtent.width != UINT32_MAX) {
+        return cap.currentExtent;
+    } else {
+        i32 width, height;
+        glfwGetFramebufferSize(win, &width, &height);
+
+        VkExtent2D extent = {
+            .width = width,
+            .height = height,
+        };
+
+        extent.width = CLAMP(cap.minImageExtent.width,extent.width, cap.maxImageExtent.width);
+        extent.height = CLAMP(cap.minImageExtent.height,extent.height, cap.maxImageExtent.height);
+
+        return extent;
+    }
+}
+
+//maybe we can dynamically calculate the graphics/present family index and pass only queues as arguments
 static inline VkDevice vk_device_create(VkPhysicalDevice pd, u32 graphics_family_index, VkQueue *graphics_queue, u32 present_family_index, VkQueue *present_queue){
     VkDevice device;
     VkDeviceQueueCreateInfo queue_cis[2] = {0};
@@ -202,6 +304,8 @@ static inline VkDevice vk_device_create(VkPhysicalDevice pd, u32 graphics_family
     ci.pEnabledFeatures = &device_features;
     ci.queueCreateInfoCount = (graphics_family_index == present_family_index) ? 1 : 2;
     ci.pQueueCreateInfos = queue_cis;
+    ci.enabledExtensionCount = ARRAY_COUNT(needed_device_extensions);
+    ci.ppEnabledExtensionNames = needed_device_extensions;
     VK_CHECK(vkCreateDevice(pd, &ci, NULL,&device));
     
 
@@ -210,6 +314,51 @@ static inline VkDevice vk_device_create(VkPhysicalDevice pd, u32 graphics_family
     vkGetDeviceQueue(device, present_family_index, 0, present_queue);
     return device;
 }
+
+VkSwapchainKHR vk_swap_create(VkDevice device, VkPhysicalDevice pd, VkSurfaceKHR surface){
+    VkSwapchainKHR swap = {0};
+
+    vk_SwapSupportDetails details = vk_query_swap_support(pd, surface);
+
+    VkSurfaceFormatKHR surface_format = vk_pick_swap_format(details.formats, details.format_count);
+    VkPresentModeKHR present_mode = vk_pick_swap_present_mode(details.present_modes, details.present_mode_count);
+    VkExtent2D extent = vk_pick_swap_extent(window, details.cap);
+
+    u32 image_count = details.cap.minImageCount + 1;
+    image_count = 2; //Whoops! TODO: fix, dis thing is hardcoded
+
+    u32 graphics_family_index, present_family_index;
+    vk_find_queue_family(pd,VK_QUEUE_GRAPHICS_BIT,&graphics_family_index);
+    vk_find_present_queue_family(pd,surface,&present_family_index);
+
+    VkSwapchainCreateInfoKHR ci = {0};
+    ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    ci.surface = surface;
+    ci.minImageCount = image_count;
+    ci.imageFormat = surface_format.format;
+    ci.imageColorSpace = surface_format.colorSpace;
+    ci.imageExtent = extent;
+    ci.imageArrayLayers = 1;
+    ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if (graphics_family_index != present_family_index){
+        u32 family_indices_array[] = {graphics_family_index, present_family_index};
+        ci.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+        ci.queueFamilyIndexCount = 2;
+        ci.pQueueFamilyIndices = family_indices_array;
+    }else {
+        ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        ci.queueFamilyIndexCount = 0;
+        ci.pQueueFamilyIndices = NULL;
+    }
+    ci.preTransform = details.cap.currentTransform;
+    ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    ci.presentMode = present_mode;
+    ci.clipped = VK_TRUE;
+    ci.oldSwapchain = VK_NULL_HANDLE;
+    VK_CHECK(vkCreateSwapchainKHR(device, &ci, NULL, &swap));
+    return swap;
+}
+
 
 M_RESULT vg_init(vgContext *ctx){
     ctx->instance = vk_instance_create();
@@ -222,14 +371,17 @@ M_RESULT vg_init(vgContext *ctx){
     vk_find_queue_family(ctx->pd, VK_QUEUE_GRAPHICS_BIT,&ctx->qgraphics_family_index);
     vk_find_present_queue_family(ctx->pd, ctx->surface,&ctx->qpresent_family_index);
     ctx->device = vk_device_create(ctx->pd, ctx->qgraphics_family_index, &ctx->graphics_queue, ctx->qpresent_family_index, &ctx->present_queue);
+    ASSERT(ctx->device);
+    ctx->swap = vk_swap_create(ctx->device,ctx->pd, ctx->surface);
     printf("vg_init success!\n");
     return M_OK;
 }
 M_RESULT vg_cleanup(vgContext *ctx){
+    vkDestroySwapchainKHR(ctx->device, ctx->swap, NULL);
     vkDestroyDevice(ctx->device, NULL);
     vkDestroySurfaceKHR(ctx->instance, ctx->surface, NULL);
     vkDestroyInstance(ctx->instance, NULL);
-    ctx->instance = vk_instance_create();
+    ctx->instance = vk_instance_create(); //TODO: WHY WHY WHY is this fucking thing here????????????????
     return M_OK;
 }
 

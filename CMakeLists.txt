@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
-
+if(MSVC)
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+endif()
 project(VKEX)
 set(CMAKE_C_STANDARD 99)
 add_executable(${PROJECT_NAME} src/main.c)
