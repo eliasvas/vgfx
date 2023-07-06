@@ -32,6 +32,15 @@ typedef struct {
     VkPresentModeKHR present_modes[VK_MAX_OBJECTS];
     u32 present_mode_count;
 }vk_SwapSupportDetails;
+typedef struct {
+	VkSwapchainKHR swap;
+	VkFormat format;
+    VkExtent2D extent;
+	VkImage images[VK_SWAP_IMAGE_COUNT];
+	VkImageView image_views[VK_SWAP_IMAGE_COUNT];
+    u32 image_count;
+}vk_SwapBundle; //just a type to include all VkObjects needed for a swapchain
+
 typedef struct vgContext {
     //Implementation (vulkan) specific fields, we should abstract them somehow!!
     VkInstance instance;
@@ -43,12 +52,9 @@ typedef struct vgContext {
     u32 qpresent_family_index;
     VkSurfaceKHR surface;
 
-
-	VkSwapchainKHR swap;
-	VkFormat swap_image_format;
-	VkImage swap_images[VK_SWAP_IMAGE_COUNT];
-	VkImageView swap_image_views[VK_SWAP_IMAGE_COUNT];
+    vk_SwapBundle swap_bundle;
 }vgContext;
+
 
 M_RESULT vg_init(vgContext *ctx);
 
@@ -315,8 +321,30 @@ static inline VkDevice vk_device_create(VkPhysicalDevice pd, u32 graphics_family
     return device;
 }
 
-VkSwapchainKHR vk_swap_create(VkDevice device, VkPhysicalDevice pd, VkSurfaceKHR surface){
-    VkSwapchainKHR swap = {0};
+M_RESULT vk_swap_bundle_swap_images_create(VkDevice device, vk_SwapBundle *bundle){
+    M_RESULT res = TRUE;
+    for (u32 i = 0; i < bundle->image_count; ++i){
+        VkImageViewCreateInfo ci = {0};
+        ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        ci.image = bundle->images[i];
+        ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        ci.format = bundle->format;
+        ci.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        ci.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        ci.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        ci.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        ci.subresourceRange.baseMipLevel = 0;
+        ci.subresourceRange.levelCount = 1;
+        ci.subresourceRange.baseArrayLayer = 0;
+        ci.subresourceRange.layerCount = 1;
+        VK_CHECK(vkCreateImageView(device, &ci, NULL, &bundle->image_views[i]));
+    }
+
+    return res;
+}
+vk_SwapBundle vk_swap_bundle_swap_create(VkDevice device, VkPhysicalDevice pd, VkSurfaceKHR surface){
+    vk_SwapBundle bundle = {0};
 
     vk_SwapSupportDetails details = vk_query_swap_support(pd, surface);
 
@@ -355,8 +383,24 @@ VkSwapchainKHR vk_swap_create(VkDevice device, VkPhysicalDevice pd, VkSurfaceKHR
     ci.presentMode = present_mode;
     ci.clipped = VK_TRUE;
     ci.oldSwapchain = VK_NULL_HANDLE;
-    VK_CHECK(vkCreateSwapchainKHR(device, &ci, NULL, &swap));
-    return swap;
+    VK_CHECK(vkCreateSwapchainKHR(device, &ci, NULL, &bundle.swap));
+    VK_CHECK(vkGetSwapchainImagesKHR(device, bundle.swap, &image_count, NULL));
+    image_count = 2; //WHY IS DIS GUY HERE?!?!
+    VK_CHECK(vkGetSwapchainImagesKHR(device, bundle.swap, &image_count, bundle.images));
+    bundle.format = surface_format.format;
+    bundle.extent = extent;
+    bundle.image_count = image_count;
+    ASSERT(vk_swap_bundle_swap_images_create(device, &bundle));
+    return bundle;
+}
+
+M_RESULT vk_swap_bundle_swap_cleanup(VkDevice device, vk_SwapBundle *bundle){
+    for (u32 i = 0; i < bundle->image_count; ++i){
+        vkDestroyImageView(device, bundle->image_views[i], NULL);
+    }
+    vkDestroySwapchainKHR(device, bundle->swap, NULL);
+    MEMZERO_STRUCT(bundle);
+    return TRUE;
 }
 
 
@@ -372,12 +416,12 @@ M_RESULT vg_init(vgContext *ctx){
     vk_find_present_queue_family(ctx->pd, ctx->surface,&ctx->qpresent_family_index);
     ctx->device = vk_device_create(ctx->pd, ctx->qgraphics_family_index, &ctx->graphics_queue, ctx->qpresent_family_index, &ctx->present_queue);
     ASSERT(ctx->device);
-    ctx->swap = vk_swap_create(ctx->device,ctx->pd, ctx->surface);
+    ctx->swap_bundle = vk_swap_bundle_swap_create(ctx->device,ctx->pd, ctx->surface);
     printf("vg_init success!\n");
     return M_OK;
 }
 M_RESULT vg_cleanup(vgContext *ctx){
-    vkDestroySwapchainKHR(ctx->device, ctx->swap, NULL);
+    vk_swap_bundle_swap_cleanup(ctx->device, &ctx->swap_bundle);
     vkDestroyDevice(ctx->device, NULL);
     vkDestroySurfaceKHR(ctx->instance, ctx->surface, NULL);
     vkDestroyInstance(ctx->instance, NULL);
