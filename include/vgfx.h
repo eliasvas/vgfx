@@ -23,6 +23,9 @@
 		}                                                           \
 	} while (0)
 
+char vs[] = "#version 450\nlayout (location = 0) out vec2 outUV;void main(){outUV = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);gl_Position = vec4(outUV * 2.0f + -1.0f, 0.0f, 1.0f);}\n";
+char fs[] = "#version 450\nlayout (location = 0) out vec4 FragColor;layout (location = 0) in vec2 inUV;void main(){FragColor = vec4(1 * inUV.x,0,0,1);}";
+
 extern GLFWwindow *window;
 
 typedef struct {
@@ -65,8 +68,16 @@ static const char *validation_layers[] = {
 };
 static const char *needed_device_extensions[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-    //VK_KHR_SURFACE_EXTENSION_NAME,
-    //VK_KHR_WIN32_SURFACE_EXTENSION_NAME
+    VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
+    VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+    VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
+    VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME,
+    VK_KHR_MAINTENANCE2_EXTENSION_NAME,
+    VK_KHR_MULTIVIEW_EXTENSION_NAME,
+    VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
+    VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME,
+    VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+
 };
 
 #ifdef NDEBUG
@@ -304,6 +315,14 @@ static inline VkDevice vk_device_create(VkPhysicalDevice pd, u32 graphics_family
         queue_cis[1] = queue_ci;   
     }
 
+    VkPhysicalDeviceShaderObjectFeaturesEXT enabled_shader_object_features = {0};
+    enabled_shader_object_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT;
+    enabled_shader_object_features.shaderObject = VK_TRUE;
+    VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamic_rendering_features = {0};
+    dynamic_rendering_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR;
+    dynamic_rendering_features.dynamicRendering = VK_TRUE;
+    dynamic_rendering_features.pNext = &enabled_shader_object_features;
+
     VkPhysicalDeviceFeatures device_features = {0};
     VkDeviceCreateInfo ci = {0};
     ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -312,6 +331,7 @@ static inline VkDevice vk_device_create(VkPhysicalDevice pd, u32 graphics_family
     ci.pQueueCreateInfos = queue_cis;
     ci.enabledExtensionCount = ARRAY_COUNT(needed_device_extensions);
     ci.ppEnabledExtensionNames = needed_device_extensions;
+    ci.pNext = &dynamic_rendering_features;
     VK_CHECK(vkCreateDevice(pd, &ci, NULL,&device));
     
 
