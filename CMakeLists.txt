@@ -4,7 +4,7 @@ if(MSVC)
 endif()
 project(VKEX)
 set(CMAKE_C_STANDARD 99)
-add_executable(${PROJECT_NAME} src/main.c)
+add_executable(${PROJECT_NAME} src/main.c ext/spirv_reflect/spirv_reflect.c)
 
 #           DOWNLOAD ALL THE SUBMODULES
 find_package(Git QUIET)

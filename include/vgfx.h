@@ -3,6 +3,7 @@
 #include "base.h"
 #include <volk/volk.h>
 #include <vma/vk_mem_alloc.h>
+#include <spirv_reflect.h>
 #define VK_USE_PLATFORM_WIN32_KHR
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -106,14 +107,14 @@ static const u8 vs_spv[] = {
   0x2b, 0x00, 0x00, 0x00, 0x1d, 0x00, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x3e, 0x00, 0x03, 0x00, 
   0x2b, 0x00, 0x00, 0x00, 0x29, 0x00, 0x00, 0x00, 0xfd, 0x00, 0x01, 0x00, 0x38, 0x00, 0x01, 0x00
 };
-char fs[] = "#version 450\nlayout (location = 0) out vec4 FragColor;layout (location = 0) in vec2 inUV;void main(){FragColor = vec4(1 * inUV.x,0,0,1);}";
+char fs[] = "#version 450\nlayout (location = 0) out vec4 FragColor;layout (location = 0) in vec2 inUV;void main(){FragColor = vec4(1.0,0.0,0.0,1.0);}";
 static const u8 fs_spv[] = {
-  0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x0d, 0x00, 0x16, 0x00, 0x00, 0x00, 
+  0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x0d, 0x00, 0x10, 0x00, 0x00, 0x00, 
   0x00, 0x00, 0x00, 0x00, 0x11, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 
   0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53, 0x4c, 0x2e, 0x73, 0x74, 0x64, 0x2e, 0x34, 0x35, 0x30, 
   0x00, 0x00, 0x00, 0x00, 0x0e, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 
   0x0f, 0x00, 0x07, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x6d, 0x61, 0x69, 0x6e, 
-  0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x10, 0x00, 0x03, 0x00, 
+  0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x10, 0x00, 0x03, 0x00, 
   0x04, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x03, 0x00, 0x03, 0x00, 0x02, 0x00, 0x00, 0x00, 
   0xc2, 0x01, 0x00, 0x00, 0x04, 0x00, 0x0a, 0x00, 0x47, 0x4c, 0x5f, 0x47, 0x4f, 0x4f, 0x47, 0x4c, 
   0x45, 0x5f, 0x63, 0x70, 0x70, 0x5f, 0x73, 0x74, 0x79, 0x6c, 0x65, 0x5f, 0x6c, 0x69, 0x6e, 0x65, 
@@ -122,31 +123,24 @@ static const u8 fs_spv[] = {
   0x65, 0x5f, 0x64, 0x69, 0x72, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x00, 0x05, 0x00, 0x04, 0x00, 
   0x04, 0x00, 0x00, 0x00, 0x6d, 0x61, 0x69, 0x6e, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x05, 0x00, 
   0x09, 0x00, 0x00, 0x00, 0x46, 0x72, 0x61, 0x67, 0x43, 0x6f, 0x6c, 0x6f, 0x72, 0x00, 0x00, 0x00, 
-  0x05, 0x00, 0x04, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x69, 0x6e, 0x55, 0x56, 0x00, 0x00, 0x00, 0x00, 
+  0x05, 0x00, 0x04, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x69, 0x6e, 0x55, 0x56, 0x00, 0x00, 0x00, 0x00, 
   0x47, 0x00, 0x04, 0x00, 0x09, 0x00, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-  0x47, 0x00, 0x04, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+  0x47, 0x00, 0x04, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
   0x13, 0x00, 0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x21, 0x00, 0x03, 0x00, 0x03, 0x00, 0x00, 0x00, 
   0x02, 0x00, 0x00, 0x00, 0x16, 0x00, 0x03, 0x00, 0x06, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 
   0x17, 0x00, 0x04, 0x00, 0x07, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 
   0x20, 0x00, 0x04, 0x00, 0x08, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 
   0x3b, 0x00, 0x04, 0x00, 0x08, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 
   0x2b, 0x00, 0x04, 0x00, 0x06, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x3f, 
-  0x17, 0x00, 0x04, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 
-  0x20, 0x00, 0x04, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 
-  0x3b, 0x00, 0x04, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 
-  0x15, 0x00, 0x04, 0x00, 0x0e, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-  0x2b, 0x00, 0x04, 0x00, 0x0e, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-  0x20, 0x00, 0x04, 0x00, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 
-  0x2b, 0x00, 0x04, 0x00, 0x06, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-  0x36, 0x00, 0x05, 0x00, 0x02, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-  0x03, 0x00, 0x00, 0x00, 0xf8, 0x00, 0x02, 0x00, 0x05, 0x00, 0x00, 0x00, 0x41, 0x00, 0x05, 0x00, 
-  0x10, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 
-  0x3d, 0x00, 0x04, 0x00, 0x06, 0x00, 0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00, 
-  0x85, 0x00, 0x05, 0x00, 0x06, 0x00, 0x00, 0x00, 0x13, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 
-  0x12, 0x00, 0x00, 0x00, 0x50, 0x00, 0x07, 0x00, 0x07, 0x00, 0x00, 0x00, 0x15, 0x00, 0x00, 0x00, 
-  0x13, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 
-  0x3e, 0x00, 0x03, 0x00, 0x09, 0x00, 0x00, 0x00, 0x15, 0x00, 0x00, 0x00, 0xfd, 0x00, 0x01, 0x00, 
-  0x38, 0x00, 0x01, 0x00
+  0x2b, 0x00, 0x04, 0x00, 0x06, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+  0x2c, 0x00, 0x07, 0x00, 0x07, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 
+  0x0b, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x17, 0x00, 0x04, 0x00, 
+  0x0d, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x20, 0x00, 0x04, 0x00, 
+  0x0e, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x3b, 0x00, 0x04, 0x00, 
+  0x0e, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x36, 0x00, 0x05, 0x00, 
+  0x02, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 
+  0xf8, 0x00, 0x02, 0x00, 0x05, 0x00, 0x00, 0x00, 0x3e, 0x00, 0x03, 0x00, 0x09, 0x00, 0x00, 0x00, 
+  0x0c, 0x00, 0x00, 0x00, 0xfd, 0x00, 0x01, 0x00, 0x38, 0x00, 0x01, 0x00
 };
 extern GLFWwindow *window;
 
@@ -180,6 +174,15 @@ typedef struct vgContext {
     vk_SwapBundle swap_bundle;
 
     VkPipeline pipe;
+    VkPipelineLayout pipe_layout;
+
+    VkCommandPool base_command_pool;
+    VkCommandBuffer cmdbuf;
+
+    VkSemaphore image_available_sem;
+    VkSemaphore render_finished_sem;
+    VkFence in_flight_fence;
+    u32 image_index;
 }vgContext;
 
 
@@ -342,7 +345,7 @@ static inline b32 vk_physical_device_gud(VkPhysicalDevice pd, VkSurfaceKHR surfa
     VkPhysicalDeviceFeatures df;
     vkGetPhysicalDeviceProperties(pd, &dp);
     vkGetPhysicalDeviceFeatures(pd, &df);
-    printf("Checking Physical Device: %s\n", dp.deviceName);
+    //printf("Checking Physical Device: %s\n", dp.deviceName);
     u32 graphics_family_index=0;
     b32 pd_supports_graphics = vk_find_queue_family(pd, VK_QUEUE_GRAPHICS_BIT,&graphics_family_index);
     u32 present_family_index=0;
@@ -558,10 +561,16 @@ VkShaderModule vk_shader_module_create(VkDevice device, const char *spv_bin, u32
     return m;
 }
 
-VkPipeline vk_pipeline_create(VkDevice device){
+VkPipeline vk_pipeline_create(VkDevice device, VkPipelineLayout *pipe_layout){
     VkPipeline pipe = {0};
+    SpvReflectShaderModule vert_info = {0};
     VkShaderModule vert = vk_shader_module_create(device, vs_spv, ARRAY_COUNT(vs_spv)*sizeof(u8));
+    spvReflectCreateShaderModule(ARRAY_COUNT(vs_spv)*sizeof(u8), vs_spv, &vert_info);
+
+    
+    SpvReflectShaderModule frag_info = {0};
     VkShaderModule frag = vk_shader_module_create(device, fs_spv, ARRAY_COUNT(fs_spv)*sizeof(u8));
+    spvReflectCreateShaderModule(ARRAY_COUNT(fs_spv)*sizeof(u8), fs_spv, &frag_info);
 
     VkPipelineShaderStageCreateInfo vci = {0};
     vci.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -623,8 +632,8 @@ VkPipeline vk_pipeline_create(VkDevice device){
     rasterizer_ci.rasterizerDiscardEnable = VK_FALSE;
     rasterizer_ci.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer_ci.lineWidth = 1.0f;
-    rasterizer_ci.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer_ci.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer_ci.cullMode = VK_CULL_MODE_NONE;
+    rasterizer_ci.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer_ci.depthBiasEnable = VK_FALSE;
     rasterizer_ci.depthBiasConstantFactor = 0.0f; // Optional
     rasterizer_ci.depthBiasClamp = 0.0f; // Optional
@@ -642,13 +651,13 @@ VkPipeline vk_pipeline_create(VkDevice device){
 
     VkPipelineColorBlendAttachmentState color_blend_attachment = {0};
     color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    color_blend_attachment.blendEnable = VK_TRUE;
-    color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-    color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
-    color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-    color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    color_blend_attachment.blendEnable = VK_FALSE;
+    color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+    color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+    color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
+    color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+    color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
 
 
     VkPipelineColorBlendStateCreateInfo color_blend_ci = {0};
@@ -664,14 +673,13 @@ VkPipeline vk_pipeline_create(VkDevice device){
 
 
 
-    VkPipelineLayout pipe_layout = VK_NULL_HANDLE;
     VkPipelineLayoutCreateInfo pipe_layout_ci = {0};
     pipe_layout_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipe_layout_ci.setLayoutCount = 0; // Optional
     pipe_layout_ci.pSetLayouts = NULL; // Optional
     pipe_layout_ci.pushConstantRangeCount = 0; // Optional
     pipe_layout_ci.pPushConstantRanges = NULL; // Optional
-    VK_CHECK(vkCreatePipelineLayout(device, &pipe_layout_ci, NULL, &pipe_layout));
+    VK_CHECK(vkCreatePipelineLayout(device, &pipe_layout_ci, NULL, pipe_layout));
 
 
     VkPipelineRenderingCreateInfoKHR pipe_rendering_ci = {0};
@@ -694,10 +702,201 @@ VkPipeline vk_pipeline_create(VkDevice device){
     pipeline_ci.pDepthStencilState = NULL; // Optional
     pipeline_ci.pColorBlendState = &color_blend_ci;
     pipeline_ci.pDynamicState = &ds_ci;
-    pipeline_ci.layout = pipe_layout;
+    pipeline_ci.layout = *pipe_layout;
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_ci, NULL, &pipe));
     return pipe;
+}
+
+VkCommandPool vk_command_pool_create(VkDevice device, u32 family_index){
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandPoolCreateInfo pool_info_ci = {0};
+    pool_info_ci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pool_info_ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    pool_info_ci.queueFamilyIndex = family_index;
+
+    VK_CHECK(vkCreateCommandPool(device, &pool_info_ci, NULL, &pool));
+    return pool;
+}
+VkCommandBuffer vk_command_buffer_create(VkDevice device, VkCommandPool pool){
+    VkCommandBuffer cmd_buf = VK_NULL_HANDLE;
+    VkCommandBufferAllocateInfo alloc_info = {0};
+    alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc_info.commandPool = pool;
+    alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc_info.commandBufferCount = 1;
+
+    VK_CHECK(vkAllocateCommandBuffers(device, &alloc_info, &cmd_buf));
+
+    return cmd_buf;
+}
+
+VkSemaphore vk_semaphore_create(VkDevice device){
+    VkSemaphore sem = VK_NULL_HANDLE;
+    VkSemaphoreCreateInfo sem_ci = {0};
+    sem_ci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    VK_CHECK(vkCreateSemaphore(device, &sem_ci, NULL, &sem));
+    return sem;
+}
+
+VkFence vk_fence_create(VkDevice device){
+    VkFence fence = VK_NULL_HANDLE;
+    VkFenceCreateInfo fence_ci = {0};
+    fence_ci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fence_ci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    VK_CHECK(vkCreateFence(device, &fence_ci, NULL, &fence));
+    return fence;
+}
+
+
+void record_cmd(vgContext *ctx, u32 image_index){
+    VkCommandBufferBeginInfo cmd_begin_info = {0};
+    cmd_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    cmd_begin_info.flags = 0; // Optional
+    cmd_begin_info.pInheritanceInfo = NULL; // Optional
+
+    VK_CHECK(vkBeginCommandBuffer(ctx->cmdbuf, &cmd_begin_info));
+
+    
+    VkImageMemoryBarrier image_memory_barrier = {0};
+    image_memory_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    image_memory_barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    image_memory_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    image_memory_barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    image_memory_barrier.image = ctx->swap_bundle.images[ctx->image_index];
+    image_memory_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    image_memory_barrier.subresourceRange.baseMipLevel = 0;
+    image_memory_barrier.subresourceRange.levelCount = 1;
+    image_memory_barrier.subresourceRange.baseArrayLayer = 0;
+    image_memory_barrier.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(
+        ctx->cmdbuf,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,  // srcStageMask
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, // dstStageMask
+        0,
+        0,
+        NULL,
+        0,
+        NULL,
+        1, // imageMemoryBarrierCount
+        &image_memory_barrier // pImageMemoryBarriers
+    );
+
+
+
+    VkRenderingAttachmentInfoKHR color_attachment = {0};
+    color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+    color_attachment.imageView = ctx->swap_bundle.image_views[ctx->image_index];
+    color_attachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.clearValue = (VkClearValue){0,0};
+    VkRenderingInfoKHR render_info = {0};
+    render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+    render_info.renderArea.offset = (VkOffset2D){0, 0};
+    render_info.renderArea.extent = (VkExtent2D){800,600};
+    render_info.layerCount = 1;
+    render_info.colorAttachmentCount = 1;
+    render_info.pColorAttachments = &color_attachment;
+    vkCmdBeginRenderingKHR(ctx->cmdbuf, &render_info);
+
+
+    vkCmdBindPipeline(ctx->cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->pipe);
+
+    VkViewport viewport = {0};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = 800;
+    viewport.height = 600;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(ctx->cmdbuf, 0, 1, &viewport);
+
+    VkRect2D scissor = {0};
+    scissor.offset = (VkOffset2D){0, 0};
+    scissor.extent = (VkExtent2D){800,600};
+    vkCmdSetScissor(ctx->cmdbuf, 0, 1, &scissor);
+
+
+    /*
+    VkClearAttachment ca = {0};
+    ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    ca.colorAttachment = VK_ATTACHMENT_UNUSED;
+    VkClearColorValue ccv = (VkClearColorValue){1.f,1.f,1.f,1.f};
+    ca.clearValue.color = ccv;
+    VkRect2D rectx = (VkRect2D){(VkOffset2D){0,0},(VkExtent2D){800,600}};
+    VkClearRect rect = (VkClearRect){rectx, 0,1};
+    vkCmdClearAttachments(ctx->cmdbuf, 1, &ca, 1, &rect);
+    */
+    vkCmdDraw(ctx->cmdbuf, 3, 1, 0, 0);
+    vkCmdDraw(ctx->cmdbuf, 3, 1, 0, 0);
+    vkCmdDraw(ctx->cmdbuf, 3, 1, 0, 0);
+
+
+    vkCmdEndRenderingKHR(ctx->cmdbuf);
+
+    VkImageMemoryBarrier image_memory_barrier2 = {0};
+    image_memory_barrier2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    image_memory_barrier2.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    image_memory_barrier2.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    image_memory_barrier2.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    image_memory_barrier2.image = ctx->swap_bundle.images[ctx->image_index];
+    image_memory_barrier2.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    image_memory_barrier2.subresourceRange.baseMipLevel = 0;
+    image_memory_barrier2.subresourceRange.levelCount = 1;
+    image_memory_barrier2.subresourceRange.baseArrayLayer = 0;
+    image_memory_barrier2.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(
+        ctx->cmdbuf,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,  // srcStageMask
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, // dstStageMask
+        0,
+        0,
+        NULL,
+        0,
+        NULL,
+        1, // imageMemoryBarrierCount
+        &image_memory_barrier2 // pImageMemoryBarriers
+    );
+
+
+    VK_CHECK(vkEndCommandBuffer(ctx->cmdbuf));
+}
+
+extern vgContext c;
+void draw_frame(){
+    vgContext *ctx = &c;
+    vkWaitForFences(ctx->device, 1, &ctx->in_flight_fence, VK_TRUE, UINT64_MAX);
+    vkResetFences(ctx->device, 1, &ctx->in_flight_fence);
+    vkAcquireNextImageKHR(ctx->device, ctx->swap_bundle.swap, UINT64_MAX, ctx->image_available_sem, VK_NULL_HANDLE, &ctx->image_index);
+    vkResetCommandBuffer(ctx->cmdbuf, 0);
+    record_cmd(ctx, ctx->image_index);
+    VkSubmitInfo submit_info = {0};
+    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    VkSemaphore wait_sems[] = {ctx->image_available_sem};
+    VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    submit_info.waitSemaphoreCount = 1;
+    submit_info.pWaitSemaphores = wait_sems;
+    submit_info.pWaitDstStageMask = wait_stages;
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &ctx->cmdbuf;
+    VkSemaphore signal_sems[] = {ctx->render_finished_sem};
+    submit_info.signalSemaphoreCount = 1;
+    submit_info.pSignalSemaphores = signal_sems;
+    VK_CHECK(vkQueueSubmit(ctx->graphics_queue, 1, &submit_info, ctx->in_flight_fence));
+
+
+    VkPresentInfoKHR present_info = {0};
+    present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    present_info.waitSemaphoreCount = 1;
+    present_info.pWaitSemaphores = signal_sems;
+    VkSwapchainKHR swaps[] = {ctx->swap_bundle.swap};
+    present_info.swapchainCount = 1;
+    present_info.pSwapchains = swaps;
+    present_info.pImageIndices = &ctx->image_index;
+    present_info.pResults = NULL;
+    vkQueuePresentKHR(ctx->present_queue, &present_info);
 }
 
 
@@ -714,12 +913,29 @@ M_RESULT vg_init(vgContext *ctx){
     ctx->device = vk_device_create(ctx->pd, ctx->qgraphics_family_index, &ctx->graphics_queue, ctx->qpresent_family_index, &ctx->present_queue);
     ASSERT(ctx->device);
     ctx->swap_bundle = vk_swap_bundle_swap_create(ctx->device,ctx->pd, ctx->surface);
-    ctx->pipe = vk_pipeline_create(ctx->device);
+    ctx->pipe = vk_pipeline_create(ctx->device, &ctx->pipe_layout);
+    ASSERT(ctx->pipe);
+    ctx->base_command_pool = vk_command_pool_create(ctx->device, ctx->qgraphics_family_index);
+    ASSERT(ctx->base_command_pool);
+    ctx->cmdbuf = vk_command_buffer_create(ctx->device, ctx->base_command_pool);
+    ASSERT(ctx->cmdbuf);
+    ctx->in_flight_fence = vk_fence_create(ctx->device);
+    ASSERT(ctx->in_flight_fence);
+    ctx->image_available_sem = vk_semaphore_create(ctx->device);
+    ASSERT(ctx->image_available_sem);
+    ctx->render_finished_sem = vk_semaphore_create(ctx->device);
+    ASSERT(ctx->render_finished_sem);
     printf("vg_init success!\n");
     return M_OK;
 }
 M_RESULT vg_cleanup(vgContext *ctx){
+    vkDestroyCommandPool(ctx->device, ctx->base_command_pool, NULL);
+    vkDestroyPipeline(ctx->device, ctx->pipe, NULL);
+    vkDestroyPipelineLayout(ctx->device, ctx->pipe_layout, NULL);
     vk_swap_bundle_swap_cleanup(ctx->device, &ctx->swap_bundle);
+    vkDestroySemaphore(ctx->device, ctx->image_available_sem, NULL);
+    vkDestroySemaphore(ctx->device, ctx->render_finished_sem, NULL);
+    vkDestroyFence(ctx->device, ctx->in_flight_fence, NULL);
     vkDestroyDevice(ctx->device, NULL);
     vkDestroySurfaceKHR(ctx->instance, ctx->surface, NULL);
     vkDestroyInstance(ctx->instance, NULL);
