@@ -160,6 +160,15 @@ typedef struct {
     u32 image_count;
 }vk_SwapBundle; //just a type to include all VkObjects needed for a swapchain
 
+typedef struct {
+	VkPipeline pipe;
+    VkPipelineLayout layout;
+    VkShaderModule vert;
+    SpvReflectShaderModule vert_info;
+    VkShaderModule frag;
+    SpvReflectShaderModule frag_info;
+    //PIPELINE_OPTIONS???
+}vk_PipeBundle; //just a type to include all VkObjects needed for a swapchain
 typedef struct vgContext {
     //Implementation (vulkan) specific fields, we should abstract them somehow!!
     VkInstance instance;
@@ -173,8 +182,7 @@ typedef struct vgContext {
 
     vk_SwapBundle swap_bundle;
 
-    VkPipeline pipe;
-    VkPipelineLayout pipe_layout;
+    vk_PipeBundle pipe;
 
     VkCommandPool base_command_pool;
     VkCommandBuffer cmdbuf;
@@ -560,9 +568,19 @@ VkShaderModule vk_shader_module_create(VkDevice device, const char *spv_bin, u32
     VK_CHECK(vkCreateShaderModule(device, &ci, NULL, &m));
     return m;
 }
-
-VkPipeline vk_pipeline_create(VkDevice device, VkPipelineLayout *pipe_layout){
-    VkPipeline pipe = {0};
+M_RESULT vk_pipe_bundle_cleanup(VkDevice device, vk_PipeBundle *bundle){
+    spvReflectDestroyShaderModule(&bundle->vert_info);
+    vkDestroyShaderModule(device, bundle->vert, VK_NULL_HANDLE);
+    spvReflectDestroyShaderModule(&bundle->frag_info);
+    vkDestroyShaderModule(device, bundle->frag, VK_NULL_HANDLE);
+    vkDestroyPipeline(device, bundle->pipe, VK_NULL_HANDLE);
+    vkDestroyPipelineLayout(device, bundle->layout, VK_NULL_HANDLE);
+    MEMZERO_STRUCT(bundle);
+    return M_OK;
+}
+vk_PipeBundle vk_pipe_bundle_create(VkDevice device){
+    VkPipeline pipe = VK_NULL_HANDLE;
+    VkPipelineLayout pipe_layout = VK_NULL_HANDLE;
     SpvReflectShaderModule vert_info = {0};
     VkShaderModule vert = vk_shader_module_create(device, vs_spv, ARRAY_COUNT(vs_spv)*sizeof(u8));
     spvReflectCreateShaderModule(ARRAY_COUNT(vs_spv)*sizeof(u8), vs_spv, &vert_info);
@@ -679,7 +697,7 @@ VkPipeline vk_pipeline_create(VkDevice device, VkPipelineLayout *pipe_layout){
     pipe_layout_ci.pSetLayouts = NULL; // Optional
     pipe_layout_ci.pushConstantRangeCount = 0; // Optional
     pipe_layout_ci.pPushConstantRanges = NULL; // Optional
-    VK_CHECK(vkCreatePipelineLayout(device, &pipe_layout_ci, NULL, pipe_layout));
+    VK_CHECK(vkCreatePipelineLayout(device, &pipe_layout_ci, NULL, &pipe_layout));
 
 
     VkPipelineRenderingCreateInfoKHR pipe_rendering_ci = {0};
@@ -702,10 +720,17 @@ VkPipeline vk_pipeline_create(VkDevice device, VkPipelineLayout *pipe_layout){
     pipeline_ci.pDepthStencilState = NULL; // Optional
     pipeline_ci.pColorBlendState = &color_blend_ci;
     pipeline_ci.pDynamicState = &ds_ci;
-    pipeline_ci.layout = *pipe_layout;
+    pipeline_ci.layout = pipe_layout;
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_ci, NULL, &pipe));
-    return pipe;
+    vk_PipeBundle bundle = {0};
+    bundle.pipe = pipe;
+    bundle.layout = pipe_layout;
+    bundle.vert = vert;
+    bundle.vert_info = vert_info;
+    bundle.frag = frag;
+    bundle.frag_info = frag_info;
+    return bundle;
 }
 
 VkCommandPool vk_command_pool_create(VkDevice device, u32 family_index){
@@ -801,7 +826,7 @@ void record_cmd(vgContext *ctx, u32 image_index){
     vkCmdBeginRenderingKHR(ctx->cmdbuf, &render_info);
 
 
-    vkCmdBindPipeline(ctx->cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->pipe);
+    vkCmdBindPipeline(ctx->cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->pipe.pipe);
 
     VkViewport viewport = {0};
     viewport.x = 0.0f;
@@ -913,8 +938,8 @@ M_RESULT vg_init(vgContext *ctx){
     ctx->device = vk_device_create(ctx->pd, ctx->qgraphics_family_index, &ctx->graphics_queue, ctx->qpresent_family_index, &ctx->present_queue);
     ASSERT(ctx->device);
     ctx->swap_bundle = vk_swap_bundle_swap_create(ctx->device,ctx->pd, ctx->surface);
-    ctx->pipe = vk_pipeline_create(ctx->device, &ctx->pipe_layout);
-    ASSERT(ctx->pipe);
+    ctx->pipe = vk_pipe_bundle_create(ctx->device);
+    ASSERT(ctx->pipe.pipe);
     ctx->base_command_pool = vk_command_pool_create(ctx->device, ctx->qgraphics_family_index);
     ASSERT(ctx->base_command_pool);
     ctx->cmdbuf = vk_command_buffer_create(ctx->device, ctx->base_command_pool);
@@ -929,9 +954,10 @@ M_RESULT vg_init(vgContext *ctx){
     return M_OK;
 }
 M_RESULT vg_cleanup(vgContext *ctx){
+    vkQueueWaitIdle(ctx->present_queue);
+    vkQueueWaitIdle(ctx->graphics_queue);
     vkDestroyCommandPool(ctx->device, ctx->base_command_pool, NULL);
-    vkDestroyPipeline(ctx->device, ctx->pipe, NULL);
-    vkDestroyPipelineLayout(ctx->device, ctx->pipe_layout, NULL);
+    vk_pipe_bundle_cleanup(ctx->device, &ctx->pipe);
     vk_swap_bundle_swap_cleanup(ctx->device, &ctx->swap_bundle);
     vkDestroySemaphore(ctx->device, ctx->image_available_sem, NULL);
     vkDestroySemaphore(ctx->device, ctx->render_finished_sem, NULL);
