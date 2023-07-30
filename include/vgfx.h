@@ -169,7 +169,13 @@ typedef struct {
     SpvReflectShaderModule frag_info;
     //PIPELINE_OPTIONS???
 }vk_PipeBundle; //just a type to include all VkObjects needed for a swapchain
-typedef struct vgContext {
+
+typedef struct {
+    VkBuffer buf;
+    VmaAllocation allocation;
+} vk_AllocatedBuffer;
+
+typedef struct {
     //Implementation (vulkan) specific fields, we should abstract them somehow!!
     VkInstance instance;
     VkPhysicalDevice pd;
@@ -191,8 +197,30 @@ typedef struct vgContext {
     VkSemaphore render_finished_sem;
     VkFence in_flight_fence;
     u32 image_index;
-}vgContext;
 
+    vk_AllocatedBuffer quad_vbo;
+
+    VmaAllocator allocator;
+}vgContext;
+void vma_load_functions(VmaVulkanFunctions *fun){
+    fun->vkAllocateMemory                    = vkAllocateMemory;
+    fun->vkBindBufferMemory                  = vkBindBufferMemory;
+    fun->vkBindImageMemory                   = vkBindImageMemory;
+    fun->vkCreateBuffer                      = vkCreateBuffer;
+    fun->vkCreateImage                       = vkCreateImage;
+    fun->vkDestroyBuffer                     = vkDestroyBuffer;
+    fun->vkDestroyImage                      = vkDestroyImage;
+    fun->vkFlushMappedMemoryRanges           = vkFlushMappedMemoryRanges;
+    fun->vkFreeMemory                        = vkFreeMemory;
+    fun->vkGetBufferMemoryRequirements       = vkGetBufferMemoryRequirements;
+    fun->vkGetImageMemoryRequirements        = vkGetImageMemoryRequirements;
+    fun->vkGetPhysicalDeviceMemoryProperties = vkGetPhysicalDeviceMemoryProperties;
+    fun->vkGetPhysicalDeviceProperties       = vkGetPhysicalDeviceProperties;
+    fun->vkInvalidateMappedMemoryRanges      = vkInvalidateMappedMemoryRanges;
+    fun->vkMapMemory                         = vkMapMemory;
+    fun->vkUnmapMemory                       = vkUnmapMemory;
+    fun->vkCmdCopyBuffer                     = vkCmdCopyBuffer;
+}
 
 M_RESULT vg_init(vgContext *ctx);
 
@@ -733,6 +761,38 @@ vk_PipeBundle vk_pipe_bundle_create(VkDevice device){
     return bundle;
 }
 
+M_RESULT vk_allocated_buffer_update(VmaAllocator alloc, vk_AllocatedBuffer *buf, void *data, u32 data_size){
+    void *mapped_data;
+    vmaMapMemory(alloc, buf->allocation, &mapped_data);
+    MEMCPY(mapped_data, data, data_size);
+    vmaUnmapMemory(alloc, buf->allocation);
+    return M_OK;
+}
+vk_AllocatedBuffer vk_allocated_buffer_create(VmaAllocator alloc, VkBufferUsageFlagBits usage, void *data, u32 data_size){
+    vk_AllocatedBuffer buf = {0};
+    //allocate vertex buffer
+	VkBufferCreateInfo bufCI = {0};
+	bufCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bufCI.size = data_size;
+	bufCI.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+
+    VmaAllocationCreateInfo vma_allocCI = {0};
+	vma_allocCI.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+	VK_CHECK(vmaCreateBuffer(alloc, &bufCI, &vma_allocCI,
+		&buf.buf,
+		&buf.allocation,
+		NULL));
+    vk_allocated_buffer_update(alloc, &buf, data, data_size);
+    
+    return buf;
+}
+
+M_RESULT vk_allocated_buffer_cleanup(VmaAllocator alloc, vk_AllocatedBuffer *buf){
+    vmaDestroyBuffer(alloc, buf->buf, buf->allocation);
+    MEMZERO_STRUCT(buf);
+    return M_OK;
+}
+
 VkCommandPool vk_command_pool_create(VkDevice device, u32 family_index){
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandPoolCreateInfo pool_info_ci = {0};
@@ -950,6 +1010,17 @@ M_RESULT vg_init(vgContext *ctx){
     ASSERT(ctx->image_available_sem);
     ctx->render_finished_sem = vk_semaphore_create(ctx->device);
     ASSERT(ctx->render_finished_sem);
+    VmaVulkanFunctions fun = {0};
+    vma_load_functions(&fun);
+    VmaAllocatorCreateInfo allocatorCI = {0};
+    allocatorCI.physicalDevice = ctx->pd;
+    allocatorCI.device = ctx->device;
+    allocatorCI.instance = ctx->instance;
+    allocatorCI.pVulkanFunctions = &fun;
+    VK_CHECK(vmaCreateAllocator(&allocatorCI, &ctx->allocator));
+    f32 data[] = {1,2,3,4,5,6,7,8,9};
+    ctx->quad_vbo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, data, ARRAY_COUNT(data)*sizeof(f32));
+
     printf("vg_init success!\n");
     return M_OK;
 }
@@ -959,6 +1030,8 @@ M_RESULT vg_cleanup(vgContext *ctx){
     vkDestroyCommandPool(ctx->device, ctx->base_command_pool, NULL);
     vk_pipe_bundle_cleanup(ctx->device, &ctx->pipe);
     vk_swap_bundle_swap_cleanup(ctx->device, &ctx->swap_bundle);
+    vk_allocated_buffer_cleanup(ctx->allocator, &ctx->quad_vbo);
+    vmaDestroyAllocator(ctx->allocator);
     vkDestroySemaphore(ctx->device, ctx->image_available_sem, NULL);
     vkDestroySemaphore(ctx->device, ctx->render_finished_sem, NULL);
     vkDestroyFence(ctx->device, ctx->in_flight_fence, NULL);
