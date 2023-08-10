@@ -185,4 +185,24 @@ typedef enum {
 #define LOG_WARN printf
 #define LOG_DBG printf
 
+
+//FILE IO
+#include <stdlib.h>
+#include <stdio.h>
+//If the read is successful, this HAS to be freed later.
+static inline u8 *read_whole_file(char *filename, u32 *file_size_in_bytes){
+  FILE *file = fopen(filename, "rb+");
+  if (file == NULL){
+    LOG_ERR("File not found!\n");
+    return NULL;
+  }
+  fseek(file, 0, SEEK_END);
+  *file_size_in_bytes = ftell(file);
+  fseek(file, 0, SEEK_SET);
+  u32 *data = MALLOC(sizeof(u32) * (*file_size_in_bytes));
+  fread(data, sizeof(u32), *file_size_in_bytes, file);
+  fclose(file);
+  return (u8*)data;
+}
+
 #endif

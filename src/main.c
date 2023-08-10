@@ -12,7 +12,7 @@
 #include "vgfx.h"
 vgContext c;
 GLFWwindow *window;
-int main(){
+int main(int argc, char *argv[]){
     printf("Game started!\n");
     volkInitialize();
     glfwInit();

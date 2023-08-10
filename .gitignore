@@ -1,5 +1,8 @@
 build/
 assets/
+!assets/
+assets/*
+!assets/shaders/
 ext/glfw/
 ext/volk/
 ext/spirv_reflect/
