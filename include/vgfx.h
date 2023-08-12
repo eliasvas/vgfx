@@ -47,6 +47,7 @@ typedef struct {
 typedef struct {
 	VkPipeline pipe;
     VkPipelineLayout layout;
+    VkDescriptorSetLayout dsl;
     VkShaderModule vert;
     SpvReflectShaderModule vert_info;
     VkShaderModule frag;
@@ -56,6 +57,7 @@ typedef struct {
 
 typedef struct {
     VkBuffer buf;
+    u32 size;
     VmaAllocation allocation;
 } vk_AllocatedBuffer;
 
@@ -84,6 +86,7 @@ typedef struct {
     u32 image_index;
 
     vk_AllocatedBuffer quad_vbo;
+    vk_AllocatedBuffer global_ubo;
 
     VmaAllocator allocator;
 }vgContext;
@@ -124,6 +127,7 @@ static const char *needed_device_extensions[] = {
     VK_KHR_MULTIVIEW_EXTENSION_NAME,
     VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
     VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME,
+    VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
     //VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
 };
 
@@ -361,11 +365,6 @@ static inline VkDevice vk_device_create(VkPhysicalDevice pd, u32 graphics_family
         queue_ci.pQueuePriorities = &queue_priority;
         queue_cis[1] = queue_ci;   
     }
-/*
-    VkPhysicalDeviceShaderObjectFeaturesEXT enabled_shader_object_features = {0};
-    enabled_shader_object_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT;
-    enabled_shader_object_features.shaderObject = VK_TRUE;
-*/
     VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamic_rendering_features = {0};
     dynamic_rendering_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR;
     dynamic_rendering_features.dynamicRendering = VK_TRUE;
@@ -487,11 +486,48 @@ M_RESULT vk_pipe_bundle_cleanup(VkDevice device, vk_PipeBundle *bundle){
     spvReflectDestroyShaderModule(&bundle->frag_info);
     vkDestroyShaderModule(device, bundle->frag, VK_NULL_HANDLE);
     vkDestroyPipeline(device, bundle->pipe, VK_NULL_HANDLE);
+    vkDestroyDescriptorSetLayout(device, bundle->dsl, VK_NULL_HANDLE);
     vkDestroyPipelineLayout(device, bundle->layout, VK_NULL_HANDLE);
     MEMZERO_STRUCT(bundle);
     return M_OK;
 }
+//TODO: vertex and fragment shaders can have different descriptor bindings/sets!
+//We dont support descriptor set layouts > 0 because in the future, when there is wider adoption
+//we will switch to VK_EXT_descriptor_buffer for descriptors
+VkPipelineLayout vk_pipe_layout_create(VkDevice device, SpvReflectShaderModule *vert_info,SpvReflectShaderModule *frag_info, VkDescriptorSetLayout *dsl)
+{
+    VkPipelineLayout pipe_layout = VK_NULL_HANDLE;
 
+    VkDescriptorSetLayoutBinding set_layout_bindings[VK_MAX_OBJECTS] = {0};
+    u32 set_layout_bindings_count = vert_info->descriptor_binding_count;
+    for (u32 i = 0; i < vert_info->descriptor_binding_count; ++i){
+        SpvReflectDescriptorBinding *binding = &vert_info->descriptor_bindings[i];
+        set_layout_bindings[i].binding = binding->binding;
+        //set_layout_bindings[i].set = binding->set;
+        set_layout_bindings[i].descriptorType = binding->descriptor_type;
+        set_layout_bindings[i].descriptorCount = 1;
+        set_layout_bindings[i].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+
+    VkDescriptorSetLayoutCreateInfo desc_layoutCI = {0};
+    desc_layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    desc_layoutCI.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+    desc_layoutCI.bindingCount = set_layout_bindings_count;
+    desc_layoutCI.pBindings = set_layout_bindings;
+    VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &desc_layoutCI, NULL, &set_layout));
+    *dsl = set_layout; // :P :P :P
+
+    VkPipelineLayoutCreateInfo pipe_layoutCI = {0};
+    pipe_layoutCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipe_layoutCI.setLayoutCount = 1; // Optional
+    pipe_layoutCI.pSetLayouts = &set_layout; // Optional
+    pipe_layoutCI.pushConstantRangeCount = 0;
+    pipe_layoutCI.pPushConstantRanges = NULL;
+
+    VK_CHECK(vkCreatePipelineLayout(device, &pipe_layoutCI, NULL, &pipe_layout));
+    return pipe_layout;
+}
 iv2 vk_get_vertex_input_info(SpvReflectShaderModule *vert_info,VkVertexInputBindingDescription  *vi_bindings, VkVertexInputAttributeDescription *vi_attribs)
 {
     i32 bindings_count = 0;
@@ -647,15 +683,8 @@ vk_PipeBundle vk_pipe_bundle_create(VkDevice device, char *vs_path, char * fs_pa
     color_blend_ci.blendConstants[2] = 0.0f; // Optional
     color_blend_ci.blendConstants[3] = 0.0f; // Optional2
 
-
-
-    VkPipelineLayoutCreateInfo pipe_layout_ci = {0};
-    pipe_layout_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipe_layout_ci.setLayoutCount = 0; // Optional
-    pipe_layout_ci.pSetLayouts = NULL; // Optional
-    pipe_layout_ci.pushConstantRangeCount = 0; // Optional
-    pipe_layout_ci.pPushConstantRanges = NULL; // Optional
-    VK_CHECK(vkCreatePipelineLayout(device, &pipe_layout_ci, NULL, &pipe_layout));
+    VkDescriptorSetLayout dsl;
+    pipe_layout = vk_pipe_layout_create(device, &vert_info, &frag_info, &dsl);
 
 
     VkPipelineRenderingCreateInfoKHR pipe_rendering_ci = {0};
@@ -684,6 +713,7 @@ vk_PipeBundle vk_pipe_bundle_create(VkDevice device, char *vs_path, char * fs_pa
     vk_PipeBundle bundle = {0};
     bundle.pipe = pipe;
     bundle.layout = pipe_layout;
+    bundle.dsl = dsl;
     bundle.vert = vert;
     bundle.vert_info = vert_info;
     bundle.frag = frag;
@@ -715,6 +745,7 @@ vk_AllocatedBuffer vk_allocated_buffer_create(VmaAllocator alloc, VkBufferUsageF
 		&buf.allocation,
 		NULL));
     vk_allocated_buffer_update(alloc, &buf, data, data_size);
+    buf.size = data_size;
     
     return buf;
 }
@@ -839,10 +870,22 @@ void record_cmd(vgContext *ctx, u32 image_index){
 
 
     vkCmdBindPipeline(ctx->cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->tri_pipe.pipe);
-    vkCmdSetViewport(ctx->cmdbuf, 0, 1, &viewport);
+    vkCmdSetViewport(ctx->cmdbuf, 0, 1, &viewport); 
     vkCmdSetScissor(ctx->cmdbuf, 0, 1, &scissor);
 	VkDeviceSize offset = 0;
 	vkCmdBindVertexBuffers(ctx->cmdbuf, 0, 1, &ctx->quad_vbo.buf, &offset);
+    VkWriteDescriptorSet write_desc_set = {0};
+    write_desc_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write_desc_set.dstSet = 0;
+    write_desc_set.dstBinding = 0;
+    write_desc_set.descriptorCount = 1;
+    write_desc_set.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    VkDescriptorBufferInfo buf_info = {0};
+    buf_info.buffer = ctx->global_ubo.buf;
+    buf_info.range = ctx->global_ubo.size;
+    buf_info.offset = 0;
+    write_desc_set.pBufferInfo = &buf_info;
+    vkCmdPushDescriptorSetKHR(ctx->cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->tri_pipe.layout, 0, 1, &write_desc_set);
     vkCmdDraw(ctx->cmdbuf, 3, 1, 0, 0);
 
     vkCmdEndRenderingKHR(ctx->cmdbuf);
@@ -954,6 +997,10 @@ M_RESULT vg_init(vgContext *ctx){
                 };
     ctx->quad_vbo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, data, ARRAY_COUNT(data)*sizeof(f32));
 
+    f32 data2[] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+    ctx->global_ubo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, data2, ARRAY_COUNT(data2)*sizeof(f32));
+
+
     printf("vg_init success!\n");
     return M_OK;
 }
@@ -962,8 +1009,10 @@ M_RESULT vg_cleanup(vgContext *ctx){
     vkQueueWaitIdle(ctx->graphics_queue);
     vkDestroyCommandPool(ctx->device, ctx->base_command_pool, NULL);
     vk_pipe_bundle_cleanup(ctx->device, &ctx->pipe);
+    vk_pipe_bundle_cleanup(ctx->device, &ctx->tri_pipe);
     vk_swap_bundle_swap_cleanup(ctx->device, &ctx->swap_bundle);
     vk_allocated_buffer_cleanup(ctx->allocator, &ctx->quad_vbo);
+    vk_allocated_buffer_cleanup(ctx->allocator, &ctx->global_ubo);
     vmaDestroyAllocator(ctx->allocator);
     vkDestroySemaphore(ctx->device, ctx->image_available_sem, NULL);
     vkDestroySemaphore(ctx->device, ctx->render_finished_sem, NULL);
