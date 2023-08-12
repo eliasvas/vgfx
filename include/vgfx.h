@@ -73,6 +73,7 @@ typedef struct {
     vk_SwapBundle swap_bundle;
 
     vk_PipeBundle pipe;
+    vk_PipeBundle tri_pipe;
 
     VkCommandPool base_command_pool;
     VkCommandBuffer cmdbuf;
@@ -490,21 +491,56 @@ M_RESULT vk_pipe_bundle_cleanup(VkDevice device, vk_PipeBundle *bundle){
     MEMZERO_STRUCT(bundle);
     return M_OK;
 }
-vk_PipeBundle vk_pipe_bundle_create(VkDevice device){
+
+iv2 vk_get_vertex_input_info(SpvReflectShaderModule *vert_info,VkVertexInputBindingDescription  *vi_bindings, VkVertexInputAttributeDescription *vi_attribs)
+{
+    i32 bindings_count = 0;
+    i32 attribs_count = 0;
+    u32 vertex_offset = 0;
+    for (u32 k = 0; k < vert_info->input_variable_count; ++k){
+        for (u32 i = 0; i < vert_info->input_variable_count; ++i){
+            SpvReflectInterfaceVariable *input_var = vert_info->input_variables[i];
+            if (input_var->built_in > 0 || input_var->location != k)continue;
+            u32 attrib_index = input_var->location;
+            vi_attribs[attrib_index].location = input_var->location;
+            vi_attribs[attrib_index].binding = 0; //TODO: maybe we need multiple buffers for some attribs?!??!?!
+            vi_attribs[attrib_index].format = input_var->format;
+            u32 offset = sizeof(f32) * input_var->numeric.vector.component_count;
+            if (input_var->numeric.matrix.column_count > 0)
+                offset *= input_var->numeric.vector.component_count;
+            vi_attribs[attrib_index].offset = vertex_offset;
+            vertex_offset += offset;
+            ++attribs_count;
+        }
+    }
+
+    if (attribs_count > 0)
+        bindings_count = 1;
+    else
+        bindings_count = 0;
+
+	vi_bindings[0].binding = 0;
+	vi_bindings[0].stride = vertex_offset;
+	vi_bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    return (iv2){bindings_count, attribs_count};
+}
+
+vk_PipeBundle vk_pipe_bundle_create(VkDevice device, char *vs_path, char * fs_path){
     VkPipeline pipe = VK_NULL_HANDLE;
     VkPipelineLayout pipe_layout = VK_NULL_HANDLE;
     SpvReflectShaderModule vert_info = {0};
     u32 vs_size=0;
-    u8 *vs = read_whole_file(SPV_DIR "full_quad.vert.spv", &vs_size);
+    u8 *vs = read_whole_file(vs_path, &vs_size);
     VkShaderModule vert = vk_shader_module_create(device, vs, vs_size*sizeof(u8));
     spvReflectCreateShaderModule(vs_size*sizeof(u8), vs, &vert_info);
 
     
     SpvReflectShaderModule frag_info = {0};
     u32 fs_size=0;
-    u8 *fs = read_whole_file(SPV_DIR "full_quad.frag.spv", &fs_size);
+    u8 *fs = read_whole_file(fs_path, &fs_size);
     VkShaderModule frag = vk_shader_module_create(device, fs, fs_size*sizeof(u8));
-    spvReflectCreateShaderModule(fs_size*sizeof(u8), fs, &vert_info);
+    spvReflectCreateShaderModule(fs_size*sizeof(u8), fs, &frag_info);
 
     VkPipelineShaderStageCreateInfo vci = {0};
     vci.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -528,13 +564,19 @@ vk_PipeBundle vk_pipe_bundle_create(VkDevice device){
     ds_ci.dynamicStateCount = ARRAY_COUNT(dynamic_states);
     ds_ci.pDynamicStates = dynamic_states;
 
+
+    VkVertexInputBindingDescription vi_bindings[VK_MAX_OBJECTS];
+    VkVertexInputAttributeDescription vi_attribs[VK_MAX_OBJECTS];
+    iv2 vertex_input_counts = vk_get_vertex_input_info(&vert_info, vi_bindings, vi_attribs);
+    i32 bindings_count = vertex_input_counts.x;
+    i32 attribs_count = vertex_input_counts.y;
     //TODO: shader introspection!!!! (we already have mr. spirv_reflect with us!)
     VkPipelineVertexInputStateCreateInfo vert_input_ci = {0};
     vert_input_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vert_input_ci.vertexBindingDescriptionCount = 0;
-    vert_input_ci.pVertexBindingDescriptions = NULL; // Optional
-    vert_input_ci.vertexAttributeDescriptionCount = 0;
-    vert_input_ci.pVertexAttributeDescriptions = NULL; // Optional
+    vert_input_ci.vertexBindingDescriptionCount = bindings_count;
+    vert_input_ci.pVertexBindingDescriptions = vi_bindings;
+    vert_input_ci.vertexAttributeDescriptionCount = attribs_count;
+    vert_input_ci.pVertexAttributeDescriptions = vi_attribs;
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly_ci = {0};
     input_assembly_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -646,6 +688,8 @@ vk_PipeBundle vk_pipe_bundle_create(VkDevice device){
     bundle.vert_info = vert_info;
     bundle.frag = frag;
     bundle.frag_info = frag_info;
+    if (fs != NULL)FREE(fs);
+    if (vs != NULL)FREE(vs);
     return bundle;
 }
 
@@ -721,6 +765,16 @@ VkFence vk_fence_create(VkDevice device){
     return fence;
 }
 
+static inline VkViewport vk_viewport_make(f32 x, f32 y, f32 width, f32 height){
+    VkViewport viewport = {0};
+    viewport.x = x;
+    viewport.y = y;
+    viewport.width = width;
+    viewport.height = height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    return viewport;
+}
 
 void record_cmd(vgContext *ctx, u32 image_index){
     VkCommandBufferBeginInfo cmd_begin_info = {0};
@@ -774,37 +828,22 @@ void record_cmd(vgContext *ctx, u32 image_index){
     vkCmdBeginRenderingKHR(ctx->cmdbuf, &render_info);
 
 
+    VkViewport viewport = vk_viewport_make(0,0,800,600);
+    VkRect2D scissor = {(VkOffset2D){0, 0},(VkExtent2D){800,600}};
+
+    
     vkCmdBindPipeline(ctx->cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->pipe.pipe);
-
-    VkViewport viewport = {0};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = 800;
-    viewport.height = 600;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
     vkCmdSetViewport(ctx->cmdbuf, 0, 1, &viewport);
-
-    VkRect2D scissor = {0};
-    scissor.offset = (VkOffset2D){0, 0};
-    scissor.extent = (VkExtent2D){800,600};
     vkCmdSetScissor(ctx->cmdbuf, 0, 1, &scissor);
-
-
-    /*
-    VkClearAttachment ca = {0};
-    ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    ca.colorAttachment = VK_ATTACHMENT_UNUSED;
-    VkClearColorValue ccv = (VkClearColorValue){1.f,1.f,1.f,1.f};
-    ca.clearValue.color = ccv;
-    VkRect2D rectx = (VkRect2D){(VkOffset2D){0,0},(VkExtent2D){800,600}};
-    VkClearRect rect = (VkClearRect){rectx, 0,1};
-    vkCmdClearAttachments(ctx->cmdbuf, 1, &ca, 1, &rect);
-    */
-    vkCmdDraw(ctx->cmdbuf, 3, 1, 0, 0);
-    vkCmdDraw(ctx->cmdbuf, 3, 1, 0, 0);
     vkCmdDraw(ctx->cmdbuf, 3, 1, 0, 0);
 
+
+    vkCmdBindPipeline(ctx->cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->tri_pipe.pipe);
+    vkCmdSetViewport(ctx->cmdbuf, 0, 1, &viewport);
+    vkCmdSetScissor(ctx->cmdbuf, 0, 1, &scissor);
+	VkDeviceSize offset = 0;
+	vkCmdBindVertexBuffers(ctx->cmdbuf, 0, 1, &ctx->quad_vbo.buf, &offset);
+    vkCmdDraw(ctx->cmdbuf, 3, 1, 0, 0);
 
     vkCmdEndRenderingKHR(ctx->cmdbuf);
 
@@ -886,8 +925,10 @@ M_RESULT vg_init(vgContext *ctx){
     ctx->device = vk_device_create(ctx->pd, ctx->qgraphics_family_index, &ctx->graphics_queue, ctx->qpresent_family_index, &ctx->present_queue);
     ASSERT(ctx->device);
     ctx->swap_bundle = vk_swap_bundle_swap_create(ctx->device,ctx->pd, ctx->surface);
-    ctx->pipe = vk_pipe_bundle_create(ctx->device);
+    ctx->pipe = vk_pipe_bundle_create(ctx->device, SPV_DIR "full_quad.vert.spv", SPV_DIR "full_quad.frag.spv");
     ASSERT(ctx->pipe.pipe);
+    ctx->tri_pipe = vk_pipe_bundle_create(ctx->device, SPV_DIR "tri.vert.spv", SPV_DIR "tri.frag.spv");
+    ASSERT(ctx->tri_pipe.pipe);
     ctx->base_command_pool = vk_command_pool_create(ctx->device, ctx->qgraphics_family_index);
     ASSERT(ctx->base_command_pool);
     ctx->cmdbuf = vk_command_buffer_create(ctx->device, ctx->base_command_pool);
@@ -906,7 +947,11 @@ M_RESULT vg_init(vgContext *ctx){
     allocatorCI.instance = ctx->instance;
     allocatorCI.pVulkanFunctions = &fun;
     VK_CHECK(vmaCreateAllocator(&allocatorCI, &ctx->allocator));
-    f32 data[] = {1,2,3,4,5,6,7,8,9};
+    f32 data[] = {
+                    1.f,1.f,0.f,0.f,0.f,0.f,0.f,0.f,1.f,
+                    -1.f,1.f,0.f,0.f,0.f,0.f,1.f,0.f,0.f,
+                    0.f,-1.f,0.f,0.f,0.f,0.f,0.f,1.f,0.f
+                };
     ctx->quad_vbo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, data, ARRAY_COUNT(data)*sizeof(f32));
 
     printf("vg_init success!\n");
