@@ -12,7 +12,7 @@
 
 #define VK_MAX_OBJECTS 256
 #define VK_SWAP_IMAGE_COUNT 2
-
+//TODO: decouple GLFW code with vulkan layer
 #define VK_CHECK(x)                                                 \
 	do                                                              \
 	{                                                               \
@@ -71,6 +71,7 @@ typedef struct {
     u32 qgraphics_family_index;
     u32 qpresent_family_index;
     VkSurfaceKHR surface;
+    iv2 window_dim;
 
     vk_SwapBundle swap_bundle;
 
@@ -468,8 +469,16 @@ M_RESULT vk_swap_bundle_swap_cleanup(VkDevice device, vk_SwapBundle *bundle){
     }
     vkDestroySwapchainKHR(device, bundle->swap, NULL);
     MEMZERO_STRUCT(bundle);
-    return TRUE;
+    return M_OK;
 }
+M_RESULT vk_swap_bundle_swap_recreate(VkDevice device, VkPhysicalDevice pd, VkSurfaceKHR surface, vk_SwapBundle *prev_swap){
+    vkDeviceWaitIdle(device);
+    //glfwGetFramebufferSize(window, &ctx->window_dim.x, &ctx->window_dim.y);
+    vk_swap_bundle_swap_cleanup(device, prev_swap);
+    *prev_swap = vk_swap_bundle_swap_create(device, pd, surface);
+    return M_OK;
+}
+
 
 VkShaderModule vk_shader_module_create(VkDevice device, const char *spv_bin, u32 size){
     VkShaderModule m = {0};
@@ -621,17 +630,7 @@ vk_PipeBundle vk_pipe_bundle_create(VkDevice device, char *vs_path, char * fs_pa
 
 
     VkViewport viewport = {0};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    //TODO: maybe we need to pass the swapchain in the pipe_create function? we need it kinda a lot
-    viewport.width = (float) 800; 
-    viewport.height = (float) 600;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
     VkRect2D scissor = {0};
-    scissor.offset = (VkOffset2D){0, 0};
-    scissor.extent = (VkExtent2D){800,600};
-
     VkPipelineViewportStateCreateInfo viewport_state_ci = {0};
     viewport_state_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     viewport_state_ci.viewportCount = 1;
@@ -807,6 +806,22 @@ static inline VkViewport vk_viewport_make(f32 x, f32 y, f32 width, f32 height){
     return viewport;
 }
 
+//TODO: make vk_set_desc_image_binding
+void vk_set_desc_buff_binding(VkCommandBuffer cmdbuf, vk_PipeBundle *pipe, u32 binding, vk_AllocatedBuffer *buf){
+    VkWriteDescriptorSet write_desc_set = {0};
+    write_desc_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write_desc_set.dstSet = 0;
+    write_desc_set.dstBinding = binding;
+    write_desc_set.descriptorCount = 1; //TODO: make array descriptors POSSIBLE!
+    write_desc_set.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    VkDescriptorBufferInfo buf_info = {0};
+    buf_info.buffer = buf->buf;
+    buf_info.range = buf->size;
+    buf_info.offset = 0;
+    write_desc_set.pBufferInfo = &buf_info;
+    vkCmdPushDescriptorSetKHR(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->layout, 0, 1, &write_desc_set);
+}
+
 void record_cmd(vgContext *ctx, u32 image_index){
     VkCommandBufferBeginInfo cmd_begin_info = {0};
     cmd_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -841,7 +856,8 @@ void record_cmd(vgContext *ctx, u32 image_index){
     );
 
 
-
+    i32 wwidth = ctx->window_dim.x, wheight = ctx->window_dim.y;
+    //glfwGetFramebufferSize(window, &wwidth, &wheight);
     VkRenderingAttachmentInfoKHR color_attachment = {0};
     color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
     color_attachment.imageView = ctx->swap_bundle.image_views[ctx->image_index];
@@ -852,15 +868,15 @@ void record_cmd(vgContext *ctx, u32 image_index){
     VkRenderingInfoKHR render_info = {0};
     render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
     render_info.renderArea.offset = (VkOffset2D){0, 0};
-    render_info.renderArea.extent = (VkExtent2D){800,600};
+    render_info.renderArea.extent = (VkExtent2D){wwidth,wheight};
     render_info.layerCount = 1;
     render_info.colorAttachmentCount = 1;
     render_info.pColorAttachments = &color_attachment;
     vkCmdBeginRenderingKHR(ctx->cmdbuf, &render_info);
 
 
-    VkViewport viewport = vk_viewport_make(0,0,800,600);
-    VkRect2D scissor = {(VkOffset2D){0, 0},(VkExtent2D){800,600}};
+    VkViewport viewport = vk_viewport_make(0,0,(f32)wwidth,(f32)wheight);
+    VkRect2D scissor = {(VkOffset2D){0, 0},(VkExtent2D){wwidth,wheight}};
 
     
     vkCmdBindPipeline(ctx->cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->pipe.pipe);
@@ -874,18 +890,7 @@ void record_cmd(vgContext *ctx, u32 image_index){
     vkCmdSetScissor(ctx->cmdbuf, 0, 1, &scissor);
 	VkDeviceSize offset = 0;
 	vkCmdBindVertexBuffers(ctx->cmdbuf, 0, 1, &ctx->quad_vbo.buf, &offset);
-    VkWriteDescriptorSet write_desc_set = {0};
-    write_desc_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write_desc_set.dstSet = 0;
-    write_desc_set.dstBinding = 0;
-    write_desc_set.descriptorCount = 1;
-    write_desc_set.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    VkDescriptorBufferInfo buf_info = {0};
-    buf_info.buffer = ctx->global_ubo.buf;
-    buf_info.range = ctx->global_ubo.size;
-    buf_info.offset = 0;
-    write_desc_set.pBufferInfo = &buf_info;
-    vkCmdPushDescriptorSetKHR(ctx->cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->tri_pipe.layout, 0, 1, &write_desc_set);
+    vk_set_desc_buff_binding(ctx->cmdbuf,&ctx->tri_pipe, 0, &ctx->global_ubo);
     vkCmdDraw(ctx->cmdbuf, 3, 1, 0, 0);
 
     vkCmdEndRenderingKHR(ctx->cmdbuf);
@@ -922,8 +927,15 @@ extern vgContext c;
 void draw_frame(){
     vgContext *ctx = &c;
     vkWaitForFences(ctx->device, 1, &ctx->in_flight_fence, VK_TRUE, UINT64_MAX);
+    VkResult res = vkAcquireNextImageKHR(ctx->device, ctx->swap_bundle.swap, UINT64_MAX, ctx->image_available_sem, VK_NULL_HANDLE, &ctx->image_index);
+    if (res == VK_ERROR_OUT_OF_DATE_KHR){ 
+        glfwGetFramebufferSize(window, &ctx->window_dim.x, &ctx->window_dim.y);
+        vk_swap_bundle_swap_recreate(ctx->device, ctx->pd, ctx->surface, &ctx->swap_bundle);
+        return;
+    }
     vkResetFences(ctx->device, 1, &ctx->in_flight_fence);
-    vkAcquireNextImageKHR(ctx->device, ctx->swap_bundle.swap, UINT64_MAX, ctx->image_available_sem, VK_NULL_HANDLE, &ctx->image_index);
+    
+    
     vkResetCommandBuffer(ctx->cmdbuf, 0);
     record_cmd(ctx, ctx->image_index);
     VkSubmitInfo submit_info = {0};
@@ -951,7 +963,11 @@ void draw_frame(){
     present_info.pSwapchains = swaps;
     present_info.pImageIndices = &ctx->image_index;
     present_info.pResults = NULL;
-    vkQueuePresentKHR(ctx->present_queue, &present_info);
+    VkResult resq = vkQueuePresentKHR(ctx->present_queue, &present_info);
+    if (resq == VK_ERROR_OUT_OF_DATE_KHR || resq == VK_SUBOPTIMAL_KHR) { 
+        glfwGetFramebufferSize(window, &ctx->window_dim.x, &ctx->window_dim.y);
+        vk_swap_bundle_swap_recreate(ctx->device, ctx->pd, ctx->surface, &ctx->swap_bundle);
+    }
 }
 
 
@@ -967,6 +983,7 @@ M_RESULT vg_init(vgContext *ctx){
     vk_find_present_queue_family(ctx->pd, ctx->surface,&ctx->qpresent_family_index);
     ctx->device = vk_device_create(ctx->pd, ctx->qgraphics_family_index, &ctx->graphics_queue, ctx->qpresent_family_index, &ctx->present_queue);
     ASSERT(ctx->device);
+    glfwGetFramebufferSize(window, &ctx->window_dim.x, &ctx->window_dim.y);
     ctx->swap_bundle = vk_swap_bundle_swap_create(ctx->device,ctx->pd, ctx->surface);
     ctx->pipe = vk_pipe_bundle_create(ctx->device, SPV_DIR "full_quad.vert.spv", SPV_DIR "full_quad.frag.spv");
     ASSERT(ctx->pipe.pipe);
@@ -997,7 +1014,7 @@ M_RESULT vg_init(vgContext *ctx){
                 };
     ctx->quad_vbo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, data, ARRAY_COUNT(data)*sizeof(f32));
 
-    f32 data2[] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+    f32 data2[] = {1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
     ctx->global_ubo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, data2, ARRAY_COUNT(data2)*sizeof(f32));
 
 
