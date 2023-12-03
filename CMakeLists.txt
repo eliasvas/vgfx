@@ -7,6 +7,15 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 17)
 add_executable(${PROJECT_NAME} src/main.c src/vma_impl.cpp ext/spirv_reflect/spirv_reflect.c)
 
+target_include_directories(${PROJECT_NAME} 
+        PUBLIC include
+        PUBLIC ext/glfw/include
+        PUBLIC ext/volk
+        PUBLIC ext/spirv_reflect
+        PUBLIC ext/vma
+)
+
+
 #           DOWNLOAD ALL THE SUBMODULES
 find_package(Git QUIET)
 if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
@@ -27,14 +36,6 @@ endif()
 find_package(Vulkan REQUIRED)
 include_directories(${Vulkan_INCLUDE_DIR})
 
-
-target_include_directories(${PROJECT_NAME} 
-        PUBLIC include
-        PUBLIC ext/glfw/include
-        PUBLIC ext/volk
-        PUBLIC ext/spirv_reflect
-        PUBLIC ext/vma
-)
 
 target_link_directories(${PROJECT_NAME}
         PUBLIC ext/glfw/src

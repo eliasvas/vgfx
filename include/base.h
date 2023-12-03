@@ -193,7 +193,7 @@ typedef enum {
 static inline u8 *read_whole_file(char *filename, u32 *file_size_in_bytes){
   FILE *file = fopen(filename, "rb+");
   if (file == NULL){
-    LOG_ERR("File not found!\n");
+    LOG_ERR("File [%s] not found!\n", filename);
     return NULL;
   }
   fseek(file, 0, SEEK_END);

@@ -1,14 +1,21 @@
 #ifndef VGFX_H
 #define VGFX_H
 #include "base.h"
-#include <volk/volk.h>
-#include <vma/vk_mem_alloc.h>
+#include "volk.h"
+#include "include/vk_mem_alloc.h"
 #include <spirv_reflect.h>
-#define VK_USE_PLATFORM_WIN32_KHR
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-#define GLFW_EXPOSE_NATIVE_WIN32
-#include <GLFW/glfw3native.h>
+
+#if OS_WIN
+    #define GLFW_INCLUDE_VULKAN
+    #include <GLFW/glfw3.h>
+    #define GLFW_EXPOSE_NATIVE_WIN32
+#elif OS_LINUX
+    #define GLFW_INCLUDE_VULKAN
+    #include <GLFW/glfw3.h>
+    #define GLFW_EXPOSE_NATIVE_X11
+#else
+    #error "Platform not supported!"
+#endif
 
 #define VK_MAX_OBJECTS 256
 #define VK_SWAP_IMAGE_COUNT 2
@@ -25,7 +32,7 @@
 	} while (0)
 
 
-#define SPV_DIR "../assets/spv_shaders/"
+#define SPV_DIR "assets/spv_shaders/"
 extern GLFWwindow *window;
 
 typedef struct {
