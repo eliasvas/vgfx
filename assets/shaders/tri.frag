@@ -10,5 +10,5 @@ layout (set = 0, binding = 0) uniform UBOScene {
 
 void main() 
 {
-    outColor = inColor * uboCamera.projection[0];
+    outColor = inColor;
 }

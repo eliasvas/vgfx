@@ -5,6 +5,12 @@
 #include "include/vk_mem_alloc.h"
 #include <spirv_reflect.h>
 
+
+//TODO:
+//1.) textures / texture samplers
+//2.) better handling of uniforms (API + implementation)
+//3.) render graph basics
+
 #if OS_WIN
     #define GLFW_INCLUDE_VULKAN
     #include <GLFW/glfw3.h>
@@ -26,7 +32,7 @@
 		VkResult err = x;                                           \
 		if (err)                                                    \
 		{                                                           \
-			printf("Detected Vulkan error: %i\n",err);              \
+			LOG_ERR("Detected Vulkan error: %i\n",err);              \
 			exit(1);                                                \
 		}                                                           \
 	} while (0)
@@ -552,7 +558,7 @@ iv2 vk_get_vertex_input_info(SpvReflectShaderModule *vert_info,VkVertexInputBind
     for (u32 k = 0; k < vert_info->input_variable_count; ++k){
         for (u32 i = 0; i < vert_info->input_variable_count; ++i){
             SpvReflectInterfaceVariable *input_var = vert_info->input_variables[i];
-            if (input_var->built_in > 0 || input_var->location != k)continue;
+            if ( (input_var->decoration_flags & SpvDecorationBuiltIn) || input_var->location != k)continue;
             u32 attrib_index = input_var->location;
             vi_attribs[attrib_index].location = input_var->location;
             vi_attribs[attrib_index].binding = 0; //TODO: maybe we need multiple buffers for some attribs?!??!?!
@@ -814,6 +820,7 @@ static inline VkViewport vk_viewport_make(f32 x, f32 y, f32 width, f32 height){
 }
 
 //TODO: make vk_set_desc_image_binding
+//also check: VK_EXT_inline_uniform_block, should simplify implementation
 void vk_set_desc_buff_binding(VkCommandBuffer cmdbuf, vk_PipeBundle *pipe, u32 binding, vk_AllocatedBuffer *buf){
     VkWriteDescriptorSet write_desc_set = {0};
     write_desc_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1025,7 +1032,7 @@ M_RESULT vg_init(vgContext *ctx){
     ctx->global_ubo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, data2, ARRAY_COUNT(data2)*sizeof(f32));
 
 
-    printf("vg_init success!\n");
+    LOG_DBG("vg_init success!\n");
     return M_OK;
 }
 M_RESULT vg_cleanup(vgContext *ctx){
