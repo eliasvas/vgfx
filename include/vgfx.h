@@ -38,7 +38,7 @@
 	} while (0)
 
 
-#define SPV_DIR "assets/spv_shaders/"
+#define SPV_DIR "../assets/spv_shaders/"
 extern GLFWwindow *window;
 
 typedef struct {
@@ -145,12 +145,7 @@ static const char *needed_device_extensions[] = {
     //VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
 };
 
-#ifdef NDEBUG
-    const b32 enable_vl = FALSE;
-#else
-    const b32 enable_vl = FALSE;
-#endif
-//static char vk_error_log[256];
+static b32 vl_enable = FALSE;
 
 static inline VkInstance vk_instance_create(void){
     VkInstance instance = VK_NULL_HANDLE;
@@ -173,7 +168,8 @@ static inline VkInstance vk_instance_create(void){
     ci.pApplicationInfo = &app_info;
     ci.enabledExtensionCount = glfw_ext_count; //TODO we need more extensions than what glfw brings!
     ci.ppEnabledExtensionNames = glfw_ext;
-    ci.enabledLayerCount = 0;
+    ci.ppEnabledLayerNames= (vl_enable) ? validation_layers : NULL;
+    ci.enabledLayerCount = (vl_enable) ? ARRAY_COUNT(validation_layers) : 0;
     VK_CHECK(vkCreateInstance(&ci, NULL, &instance));
 
     return instance;
@@ -183,9 +179,8 @@ b32 vk_check_vl_support(void){
     u32 layer_count;
     vkEnumerateInstanceLayerProperties(&layer_count, NULL);
 
-    VkLayerProperties available_layers[VK_MAX_OBJECTS]; //TODO this should be a dynamic allocation!
+    VkLayerProperties *available_layers = MALLOC(sizeof(VkLayerProperties) * layer_count);
     vkEnumerateInstanceLayerProperties(&layer_count, available_layers);
-    layer_count = MIN(VK_MAX_OBJECTS, layer_count);
     for (u32 i = 0; i < ARRAY_COUNT(validation_layers); ++i){
         b32 layer_found = FALSE;
         for (u32 j = 0; j < layer_count; ++j){
@@ -195,9 +190,11 @@ b32 vk_check_vl_support(void){
             }
         }
         if (layer_found == FALSE){
+            FREE(available_layers);
             return FALSE;
         }
     }
+    FREE(available_layers);
     return TRUE;
 }
 
@@ -205,8 +202,7 @@ b32 vk_check_device_extension_support(VkPhysicalDevice pd){
     b32 res = TRUE;
     u32 extension_count = 0;
     vkEnumerateDeviceExtensionProperties(pd, NULL, &extension_count, NULL);
-    extension_count = MIN(VK_MAX_OBJECTS, extension_count);
-    VkExtensionProperties available_extensions[VK_MAX_OBJECTS];
+    VkExtensionProperties *available_extensions = MALLOC(sizeof(VkExtensionProperties) * extension_count);
     vkEnumerateDeviceExtensionProperties(pd, NULL, &extension_count, available_extensions);
     for (u32 i = 0; i < ARRAY_COUNT(needed_device_extensions) && res; ++i){
         res = FALSE;
@@ -217,7 +213,7 @@ b32 vk_check_device_extension_support(VkPhysicalDevice pd){
             }
         } 
     }
-
+    FREE(available_extensions);
     return res;
 }
 
@@ -228,34 +224,37 @@ static inline VkSurfaceKHR vk_surface_create(VkInstance instance, GLFWwindow *wi
 }
 
 static inline b32 vk_find_queue_family(VkPhysicalDevice pd, VkQueueFlagBits queue_family, u32 *family_index){
-    VkQueueFamilyProperties queue_families[VK_MAX_OBJECTS];
     u32 queue_family_count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(pd, &queue_family_count, NULL);
-    queue_family_count = MIN(VK_MAX_OBJECTS, queue_family_count);
+    VkQueueFamilyProperties *queue_families = MALLOC(sizeof(VkQueueFamilyProperties) * queue_family_count);
     vkGetPhysicalDeviceQueueFamilyProperties(pd, &queue_family_count, queue_families);
     for (u32 i = 0; i < queue_family_count; ++i){
         if (queue_families[i].queueFlags & queue_family){
             *(family_index) = i;
+            FREE(queue_families);
             return TRUE;
         }
     }
+    FREE(queue_families);
     return FALSE;
 }
 
 static inline b32 vk_find_present_queue_family(VkPhysicalDevice pd,VkSurfaceKHR surface, u32 *family_index){
-    VkQueueFamilyProperties queue_families[VK_MAX_OBJECTS];
     u32 queue_family_count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(pd, &queue_family_count, NULL);
-    queue_family_count = MIN(VK_MAX_OBJECTS, queue_family_count);
+    VkQueueFamilyProperties *queue_families = MALLOC(sizeof(VkQueueFamilyProperties) * queue_family_count);
     vkGetPhysicalDeviceQueueFamilyProperties(pd, &queue_family_count, queue_families);
     for (u32 i = 0; i < queue_family_count; ++i){
         VkBool32 present_support = FALSE;
         vkGetPhysicalDeviceSurfaceSupportKHR(pd, i, surface, &present_support);
         if (present_support){
             *(family_index) = i;
+            FREE(queue_families);
             return TRUE;
         }
     }
+
+    FREE(queue_families);
     return FALSE;
 }
 
@@ -710,7 +709,7 @@ vk_PipeBundle vk_pipe_bundle_create(VkDevice device, char *vs_path, char * fs_pa
     pipeline_ci.stageCount = 2;
     pipeline_ci.pStages = shader_stages;
     pipeline_ci.pNext = &pipe_rendering_ci;
-    pipeline_ci.renderPass = NULL;
+    pipeline_ci.renderPass = VK_NULL_HANDLE;
     pipeline_ci.pVertexInputState = &vert_input_ci;
     pipeline_ci.pInputAssemblyState = &input_assembly_ci;
     pipeline_ci.pViewportState = &viewport_state_ci;
