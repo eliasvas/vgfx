@@ -79,6 +79,7 @@ typedef struct {
     VkInstance instance;
     VkPhysicalDevice pd;
     VkDevice device;
+    VkDebugUtilsMessengerEXT debug_messenger;
     VkQueue graphics_queue;
     VkQueue present_queue;
     u32 qgraphics_family_index;
@@ -145,7 +146,40 @@ static const char *needed_device_extensions[] = {
     //VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
 };
 
-static b32 vl_enable = FALSE;
+static b32 vl_enable = TRUE;
+
+//TODO: the extensions array is never freed, free it!
+char** vk_get_required_extensions(){
+    u32 glfw_ext_count = 0;
+    char **glfw_ext = glfwGetRequiredInstanceExtensions(&glfw_ext_count);
+    char **extensions = MALLOC(sizeof(char*) * (glfw_ext_count+1));
+    MEMCPY(extensions, glfw_ext, sizeof(char*) * glfw_ext_count);
+    extensions[glfw_ext_count] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    //for (u32 i = 0; i < glfw_ext_count+1;++i){
+    //    printf("--ext: %s\n", extensions[i]);
+    //}
+    return extensions;
+}
+static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cb( VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
+    printf("VL: %s\n", pCallbackData->pMessage);
+    return VK_FALSE;
+}
+static VkDebugUtilsMessengerCreateInfoEXT vk_debug_messenger_ci_create(void){
+    VkDebugUtilsMessengerCreateInfoEXT ci = {0};
+    ci.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    ci.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    ci.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    ci.pfnUserCallback = debug_cb;
+    ci.pUserData = NULL;
+    return ci;
+}
+static VkDebugUtilsMessengerEXT vk_debug_messenger_create(VkInstance instance){
+    VkDebugUtilsMessengerEXT msg = {0};
+    VkDebugUtilsMessengerCreateInfoEXT ci = vk_debug_messenger_ci_create();
+    PFN_vkCreateDebugUtilsMessengerEXT func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+    VK_CHECK(func(instance, &ci, NULL, &msg));
+    return msg;
+}
 
 static inline VkInstance vk_instance_create(void){
     VkInstance instance = VK_NULL_HANDLE;
@@ -166,10 +200,12 @@ static inline VkInstance vk_instance_create(void){
     VkInstanceCreateInfo ci = {0};
     ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ci.pApplicationInfo = &app_info;
-    ci.enabledExtensionCount = glfw_ext_count; //TODO we need more extensions than what glfw brings!
-    ci.ppEnabledExtensionNames = glfw_ext;
+    ci.enabledExtensionCount = glfw_ext_count+1; //TODO we need more extensions than what glfw brings!
+    ci.ppEnabledExtensionNames = vk_get_required_extensions();
     ci.ppEnabledLayerNames= (vl_enable) ? validation_layers : NULL;
     ci.enabledLayerCount = (vl_enable) ? ARRAY_COUNT(validation_layers) : 0;
+    //VkDebugUtilsMessengerCreateInfoEXT mci = vk_debug_messenger_ci_create();
+    //ci.pNext = (VkDebugUtilsMessengerCreateInfoEXT*)&mci;
     VK_CHECK(vkCreateInstance(&ci, NULL, &instance));
 
     return instance;
@@ -987,6 +1023,8 @@ void draw_frame(){
 M_RESULT vg_init(vgContext *ctx){
     ctx->instance = vk_instance_create();
     ASSERT(ctx->instance);
+    //ctx->debug_messenger = vk_debug_messenger_create(ctx->instance);
+    //ASSERT(ctx->debug_messenger);
     ctx->surface = vk_surface_create(ctx->instance, window);
     volkLoadInstance(ctx->instance);
     ctx->pd = vk_physical_device_pick(ctx->instance, ctx->surface);
