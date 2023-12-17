@@ -38,7 +38,7 @@
 	} while (0)
 
 
-#define SPV_DIR "../assets/spv_shaders/"
+#define SPV_DIR "./assets/spv_shaders/"
 extern GLFWwindow *window;
 
 typedef struct {
