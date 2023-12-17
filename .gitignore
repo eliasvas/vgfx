@@ -1,10 +1,6 @@
-build/
-assets/
-!assets/
-assets/*
-!assets/shaders/
-ext/glfw/
-ext/volk/
-ext/spirv_reflect/
-ext/vma
-.vscode/
+/build
+/ext/volk/
+/ext/spirv_reflect/
+/ext/vma/
+/ext/glfw/
+/.vscode
