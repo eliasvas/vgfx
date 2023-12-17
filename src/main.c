@@ -1,3 +1,12 @@
+//SAMPLE project (to test the engine):
+//Pokemon type advantage game! (OSU style graphics, meaning GOOD responsive, animated UI code)
+//pokemon mystery dungeon style background shader + two types + how much advantage + win animation
+//MUST be playable in the browser
+//MUST have normal mode AND memorization mode AND specific type mode
+//Maybe even some DYNAMIC and kinda procedural? (based on 1,1/2,2 OR type) physics based animations
+
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include "base.h"

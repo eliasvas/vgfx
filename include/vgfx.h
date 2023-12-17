@@ -5,7 +5,6 @@
 #include "include/vk_mem_alloc.h"
 #include <spirv_reflect.h>
 
-
 //TODO:
 //1.) textures / texture samplers
 //2.) better handling of uniforms (API + implementation)
