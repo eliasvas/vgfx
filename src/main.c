@@ -4,6 +4,8 @@
 //MUST be playable in the browser
 //MUST have normal mode AND memorization mode AND specific type mode
 //Maybe even some DYNAMIC and kinda procedural? (based on 1,1/2,2 OR type) physics based animations
+//REQ: ZERO assets, the Ball vs Ball of types will be generated of course,
+//the sounds can be generated (most anyway others can be .ini'ed), animations too, UI too (ini'ed) 
 
 
 
