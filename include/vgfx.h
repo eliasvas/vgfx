@@ -1,9 +1,21 @@
 #ifndef VGFX_H
 #define VGFX_H
+//TODO: what abt loonix?!
+#define VK_USE_PLATFORM_WIN32_KHR
 #include "base.h"
 #include "volk.h"
 #include "include/vk_mem_alloc.h"
 #include <spirv_reflect.h>
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+#if OS_WIN
+    #define GLFW_EXPOSE_NATIVE_WIN32
+#elif OS_LINUX
+    #define GLFW_EXPOSE_NATIVE_X11
+#else
+    #error "Platform not supported!"
+#endif
+#include <GLFW/glfw3native.h>
 
 //TODO:
 //1.) textures / texture samplers
@@ -37,8 +49,8 @@
 	} while (0)
 
 
+//TODO: shaders should compile also from glsl
 #define SPV_DIR "./assets/spv_shaders/"
-extern GLFWwindow *window;
 
 typedef struct {
     VkSurfaceCapabilitiesKHR cap;
@@ -74,7 +86,9 @@ typedef struct {
 } vk_AllocatedBuffer;
 
 typedef struct {
-    //Implementation (vulkan) specific fields, we should abstract them somehow!!
+    //(TODO): this should probably be a custom typed enum window, for multiple window abstractions
+    GLFWwindow *window;
+    //Implementation (Vulkan) specific fields, we should abstract them somehow!! (yep)
     VkInstance instance;
     VkPhysicalDevice pd;
     VkDevice device;
@@ -124,7 +138,7 @@ void vma_load_functions(VmaVulkanFunctions *fun){
     fun->vkCmdCopyBuffer                     = vkCmdCopyBuffer;
 }
 
-M_RESULT vg_init(vgContext *ctx);
+M_RESULT vg_init(vgContext *ctx, GLFWwindow *win);
 
 #if defined(VGFX_IMPLEMENATION) || 1
 
@@ -372,14 +386,14 @@ VkExtent2D vk_pick_swap_extent(GLFWwindow *win, VkSurfaceCapabilitiesKHR cap) {
     if (cap.currentExtent.width != UINT32_MAX) {
         return cap.currentExtent;
     } else {
-        i32 width, height;
-        glfwGetFramebufferSize(win, &width, &height);
-
+        i32 width = 0;
+        i32 height = 0;
+        //TODO: this is WRONG, we MUST get the framebuffer size.. i think!
+        //glfwGetFramebufferSize(win, &width, &height);
         VkExtent2D extent = {
             .width = width,
             .height = height,
         };
-
         extent.width = CLAMP(cap.minImageExtent.width,extent.width, cap.maxImageExtent.width);
         extent.height = CLAMP(cap.minImageExtent.height,extent.height, cap.maxImageExtent.height);
 
@@ -466,7 +480,8 @@ vk_SwapBundle vk_swap_bundle_swap_create(VkDevice device, VkPhysicalDevice pd, V
 
     VkSurfaceFormatKHR surface_format = vk_pick_swap_format(details.formats, details.format_count);
     VkPresentModeKHR present_mode = vk_pick_swap_present_mode(details.present_modes, details.present_mode_count);
-    VkExtent2D extent = vk_pick_swap_extent(window, details.cap);
+    VkExtent2D extent = vk_pick_swap_extent(NULL, details.cap);
+    //VkExtent2D extent = vk_pick_swap_extent(window, details.cap);
 
     u32 image_count = details.cap.minImageCount + 1;
     image_count = 2; //Whoops! TODO: fix, dis thing is hardcoded
@@ -971,13 +986,12 @@ void record_cmd(vgContext *ctx, u32 image_index){
     VK_CHECK(vkEndCommandBuffer(ctx->cmdbuf));
 }
 
-extern vgContext c;
-void draw_frame(){
-    vgContext *ctx = &c;
+void draw_sample_frame(vgContext *c){
+    vgContext *ctx = c;
     vkWaitForFences(ctx->device, 1, &ctx->in_flight_fence, VK_TRUE, UINT64_MAX);
     VkResult res = vkAcquireNextImageKHR(ctx->device, ctx->swap_bundle.swap, UINT64_MAX, ctx->image_available_sem, VK_NULL_HANDLE, &ctx->image_index);
     if (res == VK_ERROR_OUT_OF_DATE_KHR){ 
-        glfwGetFramebufferSize(window, &ctx->window_dim.x, &ctx->window_dim.y);
+        glfwGetFramebufferSize(ctx->window, &ctx->window_dim.x, &ctx->window_dim.y);
         vk_swap_bundle_swap_recreate(ctx->device, ctx->pd, ctx->surface, &ctx->swap_bundle);
         return;
     }
@@ -1013,18 +1027,20 @@ void draw_frame(){
     present_info.pResults = NULL;
     VkResult resq = vkQueuePresentKHR(ctx->present_queue, &present_info);
     if (resq == VK_ERROR_OUT_OF_DATE_KHR || resq == VK_SUBOPTIMAL_KHR) { 
-        glfwGetFramebufferSize(window, &ctx->window_dim.x, &ctx->window_dim.y);
+        glfwGetFramebufferSize(ctx->window, &ctx->window_dim.x, &ctx->window_dim.y);
         vk_swap_bundle_swap_recreate(ctx->device, ctx->pd, ctx->surface, &ctx->swap_bundle);
     }
 }
 
 
-M_RESULT vg_init(vgContext *ctx){
+M_RESULT vg_init(vgContext *ctx, GLFWwindow *win){
+    volkInitialize();
+    ctx->window = win;
     ctx->instance = vk_instance_create();
     ASSERT(ctx->instance);
     //ctx->debug_messenger = vk_debug_messenger_create(ctx->instance);
     //ASSERT(ctx->debug_messenger);
-    ctx->surface = vk_surface_create(ctx->instance, window);
+    ctx->surface = vk_surface_create(ctx->instance, ctx->window);
     volkLoadInstance(ctx->instance);
     ctx->pd = vk_physical_device_pick(ctx->instance, ctx->surface);
     ASSERT(ctx->pd);
@@ -1033,7 +1049,7 @@ M_RESULT vg_init(vgContext *ctx){
     vk_find_present_queue_family(ctx->pd, ctx->surface,&ctx->qpresent_family_index);
     ctx->device = vk_device_create(ctx->pd, ctx->qgraphics_family_index, &ctx->graphics_queue, ctx->qpresent_family_index, &ctx->present_queue);
     ASSERT(ctx->device);
-    glfwGetFramebufferSize(window, &ctx->window_dim.x, &ctx->window_dim.y);
+    glfwGetFramebufferSize(ctx->window, &ctx->window_dim.x, &ctx->window_dim.y);
     ctx->swap_bundle = vk_swap_bundle_swap_create(ctx->device,ctx->pd, ctx->surface);
     ctx->pipe = vk_pipe_bundle_create(ctx->device, SPV_DIR "full_quad.vert.spv", SPV_DIR "full_quad.frag.spv");
     ASSERT(ctx->pipe.pipe);

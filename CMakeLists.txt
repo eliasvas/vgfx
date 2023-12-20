@@ -2,10 +2,10 @@ cmake_minimum_required(VERSION 3.14)
 if(MSVC)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 endif()
-project(VKEX)
+project(vgfx)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 17)
-add_executable(${PROJECT_NAME} src/main.c src/vma_impl.cpp ext/spirv_reflect/spirv_reflect.c)
+add_executable(${PROJECT_NAME} src/example.c src/vma_impl.cpp ext/spirv_reflect/spirv_reflect.c)
 
 target_include_directories(${PROJECT_NAME} 
         PUBLIC include
