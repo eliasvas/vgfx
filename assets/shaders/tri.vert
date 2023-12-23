@@ -11,8 +11,12 @@ layout (set = 0, binding = 0) uniform UBOScene {
 	mat4 view;
 } uboCamera;
 
+layout (set = 0, binding = 1) uniform UBOTest {
+	vec4 color_mod;
+} uboTest;
+
 void main()
 {
 	gl_Position = vec4(vPosition, 1.0f);
-	outColor = vec4(vColor,1.0);
+	outColor = vec4(uboTest.color_mod.xyz * vColor,1.0);
 }
