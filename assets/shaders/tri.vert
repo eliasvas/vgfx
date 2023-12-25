@@ -6,12 +6,12 @@ layout (location = 2) in vec3 vColor;
 
 layout (location = 0) out vec4 outColor;
 
-layout (set = 0, binding = 0) uniform UBOScene {
-	mat4 projection;
-	mat4 view;
-} uboCamera;
+// layout (set = 0, binding = 0) uniform UBOScene {
+// 	mat4 projection;
+// 	mat4 view;
+// } uboCamera;
 
-layout (set = 0, binding = 1) uniform UBOTest {
+layout (set = 0, binding = 0) uniform UBOTest {
 	vec4 color_mod;
 } uboTest;
 

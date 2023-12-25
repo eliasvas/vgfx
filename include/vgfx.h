@@ -1,5 +1,12 @@
 #ifndef VGFX_H
 #define VGFX_H
+/*  
+    This doesnt work because of:
+    void vk_set_buff_binding(vgContext *ctx, u32 set, u32 binding, vk_AllocatedBuffer *buf);
+    for some reason this is wrong, ref: https://github.com/KhronosGroup/Vulkan-Samples/tree/main/samples/extensions/descriptor_buffer_basic
+    until the time of writing, the latest validation layers dont have support for buffer descriptors and throw an exception
+    maybe I can look at it in the future when there is better support
+*/
 //TODO: what abt loonix?!
 #define VK_USE_PLATFORM_WIN32_KHR
 #include "base.h"
@@ -182,6 +189,7 @@ static const char *needed_device_extensions[] = {
 };
 
 static b32 vl_enable = TRUE;
+//static b32 vl_enable = FALSE;
 
 //TODO: the extensions array is never freed, free it!
 char** vk_get_required_extensions(){
@@ -283,6 +291,7 @@ b32 vk_check_device_extension_support(VkPhysicalDevice pd){
                 break;
             }
         } 
+        if (!res)printf("Extension: [%s], not found!\n", needed_device_extensions[i]);
     }
     FREE(available_extensions);
     return res;
