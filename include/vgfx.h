@@ -91,6 +91,13 @@ typedef struct {
 } vk_AllocatedBuffer;
 
 typedef struct {
+    VkDescriptorSetLayout layout;
+    VkDeviceSize size; //size of the descriptor set (in bytes)
+    VkDeviceSize offset; //the offset from which the first descriptor starts 
+    vk_AllocatedBuffer buf; //buffer holding the actual descriptor
+}vk_DescriptorBuffer;
+
+typedef struct {
     //(TODO): this should probably be a custom typed enum window, for multiple window abstractions
     GLFWwindow *window;
     //Implementation (Vulkan) specific fields, we should abstract them somehow!! (yep)
@@ -120,11 +127,15 @@ typedef struct {
 
     vk_AllocatedBuffer quad_vbo;
 
-    vk_AllocatedBuffer global_ubo;
     vk_AllocatedBuffer color_ubo;
+    vk_DescriptorBuffer color_ubo_descriptor; 
+
+    vk_AllocatedBuffer global_ubo;
     vk_AllocatedBuffer color_ubo2;
 
     VmaAllocator allocator;
+
+    VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptor_buffer_properties;
 }vgContext;
 void vma_load_functions(VmaVulkanFunctions *fun){
     fun->vkAllocateMemory                    = vkAllocateMemory;
@@ -148,7 +159,6 @@ void vma_load_functions(VmaVulkanFunctions *fun){
 
 M_RESULT vg_init(vgContext *ctx, GLFWwindow *win);
 
-#if defined(VGFX_IMPLEMENATION) || 1
 
 static const char *validation_layers[] = {
     "VK_LAYER_KHRONOS_validation"
@@ -164,6 +174,10 @@ static const char *needed_device_extensions[] = {
     VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
     VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME,
     VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+    VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+	VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+	VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+	VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME,
     //VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
 };
 
@@ -435,21 +449,38 @@ static inline VkDevice vk_device_create(VkPhysicalDevice pd, u32 graphics_family
         queue_ci.pQueuePriorities = &queue_priority;
         queue_cis[1] = queue_ci;   
     }
+    
+    VkPhysicalDeviceDescriptorBufferFeaturesEXT descriptor_buffer_features = {0};
+    descriptor_buffer_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT;
+    descriptor_buffer_features.descriptorBuffer = VK_TRUE;
+    descriptor_buffer_features.pNext = NULL;
+
+    VkPhysicalDeviceBufferDeviceAddressFeatures device_address_features = {0};
+    device_address_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+    device_address_features.bufferDeviceAddress = VK_TRUE;
+    device_address_features.pNext = &descriptor_buffer_features;
+
+
+
+
     VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamic_rendering_features = {0};
     dynamic_rendering_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR;
     dynamic_rendering_features.dynamicRendering = VK_TRUE;
-    dynamic_rendering_features.pNext = NULL;//&enabled_shader_object_features;
+    dynamic_rendering_features.pNext = &device_address_features;//&enabled_shader_object_features;
 
 
-    VkPhysicalDeviceFeatures device_features = {0};
+    VkPhysicalDeviceFeatures2 physical_features = {0};
+    physical_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    physical_features.pNext = &dynamic_rendering_features; 
+    vkGetPhysicalDeviceFeatures2(pd, &physical_features); //optional??
     VkDeviceCreateInfo ci = {0};
     ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    ci.pEnabledFeatures = &device_features;
+    //ci.pEnabledFeatures = &physical_features;
+    ci.pNext= &physical_features;
     ci.queueCreateInfoCount = (graphics_family_index == present_family_index) ? 1 : 2;
     ci.pQueueCreateInfos = queue_cis;
     ci.enabledExtensionCount = ARRAY_COUNT(needed_device_extensions);
     ci.ppEnabledExtensionNames = needed_device_extensions;
-    ci.pNext = &dynamic_rendering_features;
     VK_CHECK(vkCreateDevice(pd, &ci, NULL,&device));
     
 
@@ -625,7 +656,7 @@ VkDescriptorSetLayout vk_dsl_create(VkDevice device, SpvReflectShaderModule *ver
 
     VkDescriptorSetLayoutCreateInfo desc_layoutCI = {0};
     desc_layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    desc_layoutCI.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+    desc_layoutCI.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     desc_layoutCI.bindingCount = set_layout_bindings_count;
     desc_layoutCI.pBindings = set_layout_bindings;
     VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
@@ -831,6 +862,7 @@ vk_PipeBundle vk_pipe_bundle_create(VkDevice device, char *vs_path, char * fs_pa
     pipeline_ci.pColorBlendState = &color_blend_ci;
     pipeline_ci.pDynamicState = &ds_ci;
     pipeline_ci.layout = pipe_layout;
+    pipeline_ci.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_ci, NULL, &pipe));
     bundle.pipe = pipe;
@@ -845,10 +877,12 @@ vk_PipeBundle vk_pipe_bundle_create(VkDevice device, char *vs_path, char * fs_pa
 }
 
 M_RESULT vk_allocated_buffer_update(VmaAllocator alloc, vk_AllocatedBuffer *buf, void *data, u32 data_size){
-    void *mapped_data;
-    vmaMapMemory(alloc, buf->allocation, &mapped_data);
-    MEMCPY(mapped_data, data, data_size);
-    vmaUnmapMemory(alloc, buf->allocation);
+    if (data) {
+        void *mapped_data;
+        vmaMapMemory(alloc, buf->allocation, &mapped_data);
+        MEMCPY(mapped_data, data, data_size);
+        vmaUnmapMemory(alloc, buf->allocation);
+    }
     return M_OK;
 }
 vk_AllocatedBuffer vk_allocated_buffer_create(VmaAllocator alloc, VkBufferUsageFlagBits usage, void *data, u32 data_size){
@@ -870,7 +904,13 @@ vk_AllocatedBuffer vk_allocated_buffer_create(VmaAllocator alloc, VkBufferUsageF
     
     return buf;
 }
-
+u64 vk_allocated_buffer_get_device_address(VkDevice device, vk_AllocatedBuffer *buf)
+{
+	VkBufferDeviceAddressInfoKHR buffer_device_address_info = {0};
+	buffer_device_address_info.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+	buffer_device_address_info.buffer = buf->buf;
+	return vkGetBufferDeviceAddress(device, &buffer_device_address_info);
+}
 M_RESULT vk_allocated_buffer_cleanup(VmaAllocator alloc, vk_AllocatedBuffer *buf){
     vmaDestroyBuffer(alloc, buf->buf, buf->allocation);
     MEMZERO_STRUCT(buf);
@@ -928,21 +968,80 @@ static inline VkViewport vk_viewport_make(f32 x, f32 y, f32 width, f32 height){
     return viewport;
 }
 
+// typedef struct {
+//     VkDescriptorSetLayout layout;
+//     u32 size; //size of the descriptor set (in bytes)
+//     u32 offset; //the offset from which the first descriptor starts 
+//     vk_AllocatedBuffer buf; //buffer holding the actual descriptor
+// }vk_DescriptorBuffer;
+inline VkDeviceSize aligned_size(VkDeviceSize value, VkDeviceSize alignment)
+{
+	return (value + alignment - 1) & ~(alignment - 1);
+}
+
+vk_DescriptorBuffer vk_desc_buffer_create(vgContext *ctx, VkDescriptorSetLayout layout){
+    vk_DescriptorBuffer desc_buf = {0};
+
+    // Get set layout descriptor sizes.
+    vkGetDescriptorSetLayoutSizeEXT(ctx->device, layout, &desc_buf.size);
+    //vkGetDescriptorSetLayoutSizeEXT(device, image_binding_descriptor.layout, &image_binding_descriptor.size);
+
+    // Adjust set layout sizes to satisfy alignment requirements.
+    desc_buf.size = aligned_size(desc_buf.size, ctx->descriptor_buffer_properties.descriptorBufferOffsetAlignment);
+    //image_binding_descriptor.size = aligned_size(image_binding_descriptor.size, descriptor_buffer_properties.descriptorBufferOffsetAlignment);
+
+    // Get descriptor bindings offsets as descriptors are placed inside set layout by those offsets.
+    vkGetDescriptorSetLayoutBindingOffsetEXT(ctx->device, layout, 0, &desc_buf.offset);
+    //vkGetDescriptorSetLayoutBindingOffsetEXT(device, image_binding_descriptor.layout, 0u, &image_binding_descriptor.offset);
+
+    desc_buf.buf = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, NULL, (u32)desc_buf.size);
+
+    return desc_buf;
+}
+
+void vk_desc_buffer_cleanup(vgContext *ctx, vk_DescriptorBuffer *buf){
+    vk_allocated_buffer_cleanup(ctx->allocator,&buf->buf);
+    MEMZERO_STRUCT(buf);
+}
+
+
 //TODO: make vk_set_image_binding
 //also check: VK_EXT_inline_uniform_block, should simplify implementation
-void vk_set_buff_binding(VkCommandBuffer cmdbuf, vk_PipeBundle *pipe, u32 set, u32 binding, vk_AllocatedBuffer *buf){
-    VkWriteDescriptorSet write_desc_set = {0};
-    write_desc_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write_desc_set.dstSet = 0;
-    write_desc_set.dstBinding = binding;
-    write_desc_set.descriptorCount = 1; //TODO: make array descriptors POSSIBLE!
-    write_desc_set.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    VkDescriptorBufferInfo buf_info = {0};
-    buf_info.buffer = buf->buf;
-    buf_info.range = buf->size;
-    buf_info.offset = 0;
-    write_desc_set.pBufferInfo = &buf_info;
-    vkCmdPushDescriptorSetKHR(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->layout, set, 1, &write_desc_set);
+void vk_set_buff_binding(vgContext *ctx, u32 set, u32 binding, vk_AllocatedBuffer *buf){
+    // VkWriteDescriptorSet write_desc_set = {0};
+    // write_desc_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    // write_desc_set.dstSet = 0;
+    // write_desc_set.dstBinding = binding;
+    // write_desc_set.descriptorCount = 1; //TODO: make array descriptors POSSIBLE!
+    // write_desc_set.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    // VkDescriptorBufferInfo buf_info = {0};
+    // buf_info.buffer = buf->buf;
+    // buf_info.range = buf->size;
+    // buf_info.offset = 0;
+    // write_desc_set.pBufferInfo = &buf_info;
+    // vkCmdPushDescriptorSetKHR(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->layout, set, 1, &write_desc_set);
+    char *uniform_descriptor_buf_ptr = (char *) ctx->color_ubo_descriptor.buf.buf;
+
+    VkDescriptorAddressInfoEXT addr_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT};
+    addr_info.address                    = vk_allocated_buffer_get_device_address(ctx->device, buf); 
+    addr_info.range                      = buf->size; 
+    addr_info.format                     = VK_FORMAT_UNDEFINED;
+    VkDescriptorGetInfoEXT buffer_descriptor_info = {0};
+    buffer_descriptor_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT;
+    buffer_descriptor_info.type                = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    buffer_descriptor_info.data.pUniformBuffer = &addr_info;
+    vkGetDescriptorEXT(ctx->device, &buffer_descriptor_info, ctx->descriptor_buffer_properties.uniformBufferDescriptorSize, uniform_descriptor_buf_ptr);
+
+    // Binding 0 = uniform buffer
+    VkDescriptorBufferBindingInfoEXT descriptor_buffer_binding_info = {0};
+    descriptor_buffer_binding_info.sType   = VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT;
+    descriptor_buffer_binding_info.address = vk_allocated_buffer_get_device_address(ctx->device, &ctx->color_ubo_descriptor.buf);
+    descriptor_buffer_binding_info.usage   = VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT;
+    vkCmdBindDescriptorBuffersEXT(ctx->cmdbuf, 1, &descriptor_buffer_binding_info);
+    u32 buffer_index_ubo = 0;
+    VkDeviceSize buffer_offset = 0;
+    vkCmdSetDescriptorBufferOffsetsEXT(ctx->cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->tri_pipe.layout, 0, 1, &buffer_index_ubo, &buffer_offset);
+
 }
 
 void record_cmd(vgContext *ctx, u32 image_index){
@@ -1013,8 +1112,8 @@ void record_cmd(vgContext *ctx, u32 image_index){
     vkCmdSetScissor(ctx->cmdbuf, 0, 1, &scissor);
 	VkDeviceSize offset = 0;
 	vkCmdBindVertexBuffers(ctx->cmdbuf, 0, 1, &ctx->quad_vbo.buf, &offset);
-    vk_set_buff_binding(ctx->cmdbuf,&ctx->tri_pipe,0,0, &ctx->global_ubo);
-    vk_set_buff_binding(ctx->cmdbuf,&ctx->tri_pipe,0,1, &ctx->color_ubo);
+    //vk_set_buff_binding(ctx->cmdbuf,&ctx->tri_pipe,0,0, &ctx->global_ubo);
+    vk_set_buff_binding(ctx,0,0,&ctx->color_ubo);
     //vk_set_buff_binding(ctx->cmdbuf,&ctx->tri_pipe,1,0, &ctx->color_ubo2);
     vkCmdDraw(ctx->cmdbuf, 3, 1, 0, 0);
 
@@ -1106,6 +1205,13 @@ M_RESULT vg_init(vgContext *ctx, GLFWwindow *win){
     volkLoadInstance(ctx->instance);
     ctx->pd = vk_physical_device_pick(ctx->instance, ctx->surface);
     ASSERT(ctx->pd);
+    //TODO: this should be in a function? its the initialization for VK_EXT_descriptor_buffer support
+    VkPhysicalDeviceProperties2 device_properties = {0};
+    MEMZERO_STRUCT(&ctx->descriptor_buffer_properties);
+	ctx->descriptor_buffer_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT;
+	device_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+	device_properties.pNext = &ctx->descriptor_buffer_properties;
+	vkGetPhysicalDeviceProperties2(ctx->pd, &device_properties);
     ASSERT(vk_check_vl_support());
     vk_find_queue_family(ctx->pd, VK_QUEUE_GRAPHICS_BIT,&ctx->qgraphics_family_index);
     vk_find_present_queue_family(ctx->pd, ctx->surface,&ctx->qpresent_family_index);
@@ -1134,6 +1240,7 @@ M_RESULT vg_init(vgContext *ctx, GLFWwindow *win){
     allocatorCI.device = ctx->device;
     allocatorCI.instance = ctx->instance;
     allocatorCI.pVulkanFunctions = &fun;
+    allocatorCI.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
     VK_CHECK(vmaCreateAllocator(&allocatorCI, &ctx->allocator));
     f32 data[] = {
                     1.f,1.f,0.f,0.f,0.f,0.f,0.f,0.f,1.f,
@@ -1143,11 +1250,13 @@ M_RESULT vg_init(vgContext *ctx, GLFWwindow *win){
     ctx->quad_vbo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, data, ARRAY_COUNT(data)*sizeof(f32));
 
     f32 data2[] = {1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
-    ctx->global_ubo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, data2, ARRAY_COUNT(data2)*sizeof(f32));
-    f32 data_color[] = {1.0,1.0,1.0,1.0};
-    ctx->color_ubo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, data_color, ARRAY_COUNT(data_color)*sizeof(f32));
-    ctx->color_ubo2 = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, data_color, ARRAY_COUNT(data_color)*sizeof(f32));
+    ctx->global_ubo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, data2, ARRAY_COUNT(data2)*sizeof(f32));
+    f32 data_color[] = {1.0,0.0,1.0,1.0};
+   ctx->color_ubo2 = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT| VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, data_color, ARRAY_COUNT(data_color)*sizeof(f32));
 
+    ctx->color_ubo = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT| VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, data_color, ARRAY_COUNT(data_color)*sizeof(f32));
+    ctx->color_ubo_descriptor = vk_desc_buffer_create(ctx, ctx->tri_pipe.dsls[0]);
+ 
 
     LOG_DBG("vg_init success!\n");
     return M_OK;
@@ -1174,5 +1283,4 @@ M_RESULT vg_cleanup(vgContext *ctx){
     return M_OK;
 }
 
-#endif
 #endif

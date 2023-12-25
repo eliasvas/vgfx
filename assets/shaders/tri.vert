@@ -19,4 +19,5 @@ void main()
 {
 	gl_Position = vec4(vPosition, 1.0f);
 	outColor = vec4(uboTest.color_mod.xyz * vColor,1.0);
+	//outColor = vec4(vColor,1.0);
 }
