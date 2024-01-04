@@ -30,6 +30,7 @@
 //3.) render graph basics
 //4.) skybox, we could probably cheat by using this: https://www.shadertoy.com/view/wslyWs
 //5.) frames in flight?!
+//6.) Organization/Readability (vulkan objects -> vulkan abstractions -> actual abstractions)
 
 #if OS_WIN
     #define GLFW_INCLUDE_VULKAN
@@ -467,6 +468,7 @@ static inline VkDevice vk_device_create(VkPhysicalDevice pd, u32 graphics_family
     VkPhysicalDeviceBufferDeviceAddressFeatures device_address_features = {0};
     device_address_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
     device_address_features.bufferDeviceAddress = VK_TRUE;
+    device_address_features.bufferDeviceAddressCaptureReplay = VK_TRUE;
     device_address_features.pNext = &descriptor_buffer_features;
 
 
@@ -499,6 +501,10 @@ static inline VkDevice vk_device_create(VkPhysicalDevice pd, u32 graphics_family
     return device;
 }
 
+
+//------------------------------------------------------------
+// vk_SwapBundle (a light abstraction over a vulkan swapchain)
+//------------------------------------------------------------
 M_RESULT vk_swap_bundle_swap_images_create(VkDevice device, vk_SwapBundle *bundle){
     M_RESULT res = TRUE;
     for (u32 i = 0; i < bundle->image_count; ++i){
@@ -588,6 +594,7 @@ M_RESULT vk_swap_bundle_swap_recreate(VkDevice device, VkPhysicalDevice pd, VkSu
     *prev_swap = vk_swap_bundle_swap_create(device, pd, surface);
     return M_OK;
 }
+//------------------------------------------------------------
 
 
 VkShaderModule vk_shader_module_create(VkDevice device, const char *spv_bin, u32 size){
@@ -598,19 +605,6 @@ VkShaderModule vk_shader_module_create(VkDevice device, const char *spv_bin, u32
     ci.pCode = (u32*)(spv_bin);
     VK_CHECK(vkCreateShaderModule(device, &ci, NULL, &m));
     return m;
-}
-M_RESULT vk_pipe_bundle_cleanup(VkDevice device, vk_PipeBundle *bundle){
-    spvReflectDestroyShaderModule(&bundle->vert_info);
-    vkDestroyShaderModule(device, bundle->vert, VK_NULL_HANDLE);
-    spvReflectDestroyShaderModule(&bundle->frag_info);
-    vkDestroyShaderModule(device, bundle->frag, VK_NULL_HANDLE);
-    vkDestroyPipeline(device, bundle->pipe, VK_NULL_HANDLE);
-    for (u32 i = 0; i < MAX_DESCRIPTOR_SET; ++i) {
-        vkDestroyDescriptorSetLayout(device, bundle->dsls[i], VK_NULL_HANDLE);
-    }
-    vkDestroyPipelineLayout(device, bundle->layout, VK_NULL_HANDLE);
-    MEMZERO_STRUCT(bundle);
-    return M_OK;
 }
 
 VkDescriptorSetLayout vk_dsl_create(VkDevice device, SpvReflectShaderModule *vert_info,SpvReflectShaderModule *frag_info, u32 set){
@@ -672,6 +666,7 @@ VkDescriptorSetLayout vk_dsl_create(VkDevice device, SpvReflectShaderModule *ver
     VK_CHECK(vkCreateDescriptorSetLayout(device, &desc_layoutCI, NULL, &set_layout));
     return set_layout;
 }
+
 //TODO: vertex and fragment shaders can have different descriptor bindings/sets! We should intersect all their bindings to make the final layout
 //TODO: we should switch to VK_EXT_descriptor_buffer for descriptors at some point
 //TODO: no path for textures? only uniform buffer supported at this time sadly
@@ -699,6 +694,8 @@ VkPipelineLayout vk_pipe_layout_create(VkDevice device, SpvReflectShaderModule *
     VK_CHECK(vkCreatePipelineLayout(device, &pipe_layoutCI, NULL, &pipe_layout));
     return pipe_layout;
 }
+
+
 
 iv2 vk_get_vertex_input_info(SpvReflectShaderModule *vert_info,VkVertexInputBindingDescription  *vi_bindings, VkVertexInputAttributeDescription *vi_attribs)
 {
@@ -734,6 +731,10 @@ iv2 vk_get_vertex_input_info(SpvReflectShaderModule *vert_info,VkVertexInputBind
     return (iv2){bindings_count, attribs_count};
 }
 
+
+//------------------------------------------------------------
+//vk_PipeBundle (light abstraction over vulkan pipelines)
+//------------------------------------------------------------
 vk_PipeBundle vk_pipe_bundle_create(VkDevice device, char *vs_path, char * fs_path){
     vk_PipeBundle bundle = {0};
 
@@ -885,6 +886,39 @@ vk_PipeBundle vk_pipe_bundle_create(VkDevice device, char *vs_path, char * fs_pa
     return bundle;
 }
 
+M_RESULT vk_pipe_bundle_cleanup(VkDevice device, vk_PipeBundle *bundle){
+    spvReflectDestroyShaderModule(&bundle->vert_info);
+    vkDestroyShaderModule(device, bundle->vert, VK_NULL_HANDLE);
+    spvReflectDestroyShaderModule(&bundle->frag_info);
+    vkDestroyShaderModule(device, bundle->frag, VK_NULL_HANDLE);
+    vkDestroyPipeline(device, bundle->pipe, VK_NULL_HANDLE);
+    for (u32 i = 0; i < MAX_DESCRIPTOR_SET; ++i) {
+        vkDestroyDescriptorSetLayout(device, bundle->dsls[i], VK_NULL_HANDLE);
+    }
+    vkDestroyPipelineLayout(device, bundle->layout, VK_NULL_HANDLE);
+    MEMZERO_STRUCT(bundle);
+    return M_OK;
+}
+//------------------------------------------------------------
+
+#define COLOR_BLACK 255
+void *sample_pixels_create(u32 format, u32 ppt, u32 width, u32 height, u32 color) {
+    u32 components = (format & 1) ? 4 : 3; //TODO make format encode also type of pixels, CHAR for each component now 
+    u8 *pixels = MALLOC(sizeof(char) * 4 * width * height);
+    for (u32 x = 0; x < width; ++x){
+        for (u32 y = 0; y < height; ++y){
+            if ((x % (ppt&2) < ppt) || (y % (ppt&2) < ppt))
+                pixels[width * y + x] = color;
+            else
+                pixels[width * y + x] = COLOR_BLACK;
+        }
+    }
+    return pixels;
+}
+
+//------------------------------------------------------------
+// vk_AllocatedBuffer implementation (light abstraction over vulkan GPU buffers)
+//------------------------------------------------------------
 M_RESULT vk_allocated_buffer_update(VmaAllocator alloc, vk_AllocatedBuffer *buf, void *data, u32 data_size){
     if (data) {
         void *mapped_data;
@@ -925,6 +959,7 @@ M_RESULT vk_allocated_buffer_cleanup(VmaAllocator alloc, vk_AllocatedBuffer *buf
     MEMZERO_STRUCT(buf);
     return M_OK;
 }
+//------------------------------------------------------------
 
 VkCommandPool vk_command_pool_create(VkDevice device, u32 family_index){
     VkCommandPool pool = VK_NULL_HANDLE;
@@ -983,6 +1018,11 @@ static inline VkViewport vk_viewport_make(f32 x, f32 y, f32 width, f32 height){
 //     u32 offset; //the offset from which the first descriptor starts 
 //     vk_AllocatedBuffer buf; //buffer holding the actual descriptor
 // }vk_DescriptorBuffer;
+
+//------------------------------------------------------------
+// vk_DescrtiptorBuffer implementation (light abstraction over vulkan descriptor buffer, a buffer of descriptor(s))
+//------------------------------------------------------------
+
 inline VkDeviceSize aligned_size(VkDeviceSize value, VkDeviceSize alignment)
 {
 	return (value + alignment - 1) & ~(alignment - 1);
@@ -991,19 +1031,21 @@ inline VkDeviceSize aligned_size(VkDeviceSize value, VkDeviceSize alignment)
 vk_DescriptorBuffer vk_desc_buffer_create(vgContext *ctx, VkDescriptorSetLayout layout){
     vk_DescriptorBuffer desc_buf = {0};
 
-    // Get set layout descriptor sizes.
-    vkGetDescriptorSetLayoutSizeEXT(ctx->device, layout, &desc_buf.size);
-    //vkGetDescriptorSetLayoutSizeEXT(device, image_binding_descriptor.layout, &image_binding_descriptor.size);
+    if (layout != VK_NULL_HANDLE) {
+        // Get set layout descriptor sizes.
+        vkGetDescriptorSetLayoutSizeEXT(ctx->device, layout, &desc_buf.size);
+        //vkGetDescriptorSetLayoutSizeEXT(device, image_binding_descriptor.layout, &image_binding_descriptor.size);
 
-    // Adjust set layout sizes to satisfy alignment requirements.
-    desc_buf.size = aligned_size(desc_buf.size, ctx->descriptor_buffer_properties.descriptorBufferOffsetAlignment);
-    //image_binding_descriptor.size = aligned_size(image_binding_descriptor.size, descriptor_buffer_properties.descriptorBufferOffsetAlignment);
+        // Adjust set layout sizes to satisfy alignment requirements.
+        desc_buf.size = aligned_size(desc_buf.size, ctx->descriptor_buffer_properties.descriptorBufferOffsetAlignment);
+        //image_binding_descriptor.size = aligned_size(image_binding_descriptor.size, descriptor_buffer_properties.descriptorBufferOffsetAlignment);
 
-    // Get descriptor bindings offsets as descriptors are placed inside set layout by those offsets.
-    vkGetDescriptorSetLayoutBindingOffsetEXT(ctx->device, layout, 0, &desc_buf.offset);
-    //vkGetDescriptorSetLayoutBindingOffsetEXT(device, image_binding_descriptor.layout, 0u, &image_binding_descriptor.offset);
+        // Get descriptor bindings offsets as descriptors are placed inside set layout by those offsets.
+        vkGetDescriptorSetLayoutBindingOffsetEXT(ctx->device, layout, 0, &desc_buf.offset);
+        //vkGetDescriptorSetLayoutBindingOffsetEXT(device, image_binding_descriptor.layout, 0u, &image_binding_descriptor.offset);
 
-    desc_buf.buf = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, NULL, (u32)desc_buf.size);
+        desc_buf.buf = vk_allocated_buffer_create(ctx->allocator, VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, NULL, (u32)desc_buf.size);
+    }
 
     return desc_buf;
 }
@@ -1013,23 +1055,12 @@ void vk_desc_buffer_cleanup(vgContext *ctx, vk_DescriptorBuffer *buf){
     MEMZERO_STRUCT(buf);
 }
 
-
 //TODO: make vk_set_image_binding
-//also check: VK_EXT_inline_uniform_block, should simplify implementation
 void vk_set_buff_binding(vgContext *ctx, u32 set, u32 binding, vk_AllocatedBuffer *buf){
-    // VkWriteDescriptorSet write_desc_set = {0};
-    // write_desc_set.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    // write_desc_set.dstSet = 0;
-    // write_desc_set.dstBinding = binding;
-    // write_desc_set.descriptorCount = 1; //TODO: make array descriptors POSSIBLE!
-    // write_desc_set.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    // VkDescriptorBufferInfo buf_info = {0};
-    // buf_info.buffer = buf->buf;
-    // buf_info.range = buf->size;
-    // buf_info.offset = 0;
-    // write_desc_set.pBufferInfo = &buf_info;
-    // vkCmdPushDescriptorSetKHR(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->layout, set, 1, &write_desc_set);
-    char *uniform_descriptor_buf_ptr = (char *) ctx->color_ubo_descriptor.buf.buf;
+    void *mapped_data;
+    vmaMapMemory(ctx->allocator, ctx->color_ubo_descriptor.buf.allocation, &mapped_data);
+    //MEMCPY(mapped_data, data, data_size);
+    char *uniform_descriptor_buf_ptr = (char *) mapped_data;
 
     VkDescriptorAddressInfoEXT addr_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT};
     addr_info.address                    = vk_allocated_buffer_get_device_address(ctx->device, buf); 
@@ -1051,7 +1082,9 @@ void vk_set_buff_binding(vgContext *ctx, u32 set, u32 binding, vk_AllocatedBuffe
     VkDeviceSize buffer_offset = 0;
     vkCmdSetDescriptorBufferOffsetsEXT(ctx->cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->tri_pipe.layout, 0, 1, &buffer_index_ubo, &buffer_offset);
 
+    vmaUnmapMemory(ctx->allocator, ctx->color_ubo_descriptor.buf.allocation);
 }
+//------------------------------------------------------------
 
 void record_cmd(vgContext *ctx, u32 image_index){
     VkCommandBufferBeginInfo cmd_begin_info = {0};
@@ -1121,9 +1154,8 @@ void record_cmd(vgContext *ctx, u32 image_index){
     vkCmdSetScissor(ctx->cmdbuf, 0, 1, &scissor);
 	VkDeviceSize offset = 0;
 	vkCmdBindVertexBuffers(ctx->cmdbuf, 0, 1, &ctx->quad_vbo.buf, &offset);
-    //vk_set_buff_binding(ctx->cmdbuf,&ctx->tri_pipe,0,0, &ctx->global_ubo);
+    //vk_set_buff_binding_wrong(ctx->cmdbuf,&ctx->tri_pipe,0,0,&ctx->color_ubo);
     vk_set_buff_binding(ctx,0,0,&ctx->color_ubo);
-    //vk_set_buff_binding(ctx->cmdbuf,&ctx->tri_pipe,1,0, &ctx->color_ubo2);
     vkCmdDraw(ctx->cmdbuf, 3, 1, 0, 0);
 
     vkCmdEndRenderingKHR(ctx->cmdbuf);
@@ -1280,6 +1312,7 @@ M_RESULT vg_cleanup(vgContext *ctx){
     vk_allocated_buffer_cleanup(ctx->allocator, &ctx->quad_vbo);
     vk_allocated_buffer_cleanup(ctx->allocator, &ctx->global_ubo);
     vk_allocated_buffer_cleanup(ctx->allocator, &ctx->color_ubo);
+    vk_desc_buffer_cleanup(ctx, &ctx->color_ubo_descriptor);
     vk_allocated_buffer_cleanup(ctx->allocator, &ctx->color_ubo2);
     vmaDestroyAllocator(ctx->allocator);
     vkDestroySemaphore(ctx->device, ctx->image_available_sem, NULL);
